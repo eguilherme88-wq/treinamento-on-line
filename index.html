@@ -61,6 +61,8 @@ img,video{max-width:100%}
 .brand-mark.has-logo{background:transparent;border-radius:0;width:100%;max-width:200px;height:68px}
 .brand-mark img{width:100%;height:100%;object-fit:contain;display:block}
 .nav .brand-mark.has-logo img{object-position:left center}
+:root[data-theme="dark"] .brand-mark.has-logo img{filter:invert(1) hue-rotate(180deg) brightness(1.05)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .brand-mark.has-logo img{filter:invert(1) hue-rotate(180deg) brightness(1.05)}}
 .brand-mark svg{width:24px;height:24px}
 .brand>div:last-child{min-width:0}
 .brand b,.brand span{overflow-wrap:anywhere}
@@ -68,7 +70,11 @@ img,video{max-width:100%}
 .who-id{min-width:0}
 .who-id .name{font-weight:600;font-size:14px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .who-id .badge{margin-top:4px}
-.who .tools{display:flex;gap:2px;margin-left:-6px}
+.col{min-width:0;display:flex;flex-direction:column}
+.topbar{position:sticky;top:0;z-index:20;display:flex;justify-content:flex-end;align-items:flex-start;padding:14px clamp(16px,2.4vw,28px) 0;pointer-events:none;height:0;overflow:visible}
+.topbar .tools{pointer-events:auto;display:flex;gap:2px;padding:4px;border:1px solid var(--line);background:var(--surface);border-radius:999px;box-shadow:0 4px 14px rgba(0,0,0,.08)}
+.topbar .icon-btn{border-radius:999px;width:38px;height:38px}
+.topbar .icon-btn:hover{background:var(--sunk);color:var(--ink,inherit)}
 .icon-btn,.nav .icon-btn{all:unset;box-sizing:border-box;cursor:pointer;width:34px;height:34px;padding:0;display:inline-grid;place-items:center;border-radius:var(--radius);color:var(--muted);flex:none}
 .icon-btn:hover,.nav .icon-btn:hover{background:var(--sunk);color:var(--ink)}
 .icon-btn:focus-visible{outline:2px solid var(--accent)}
@@ -101,7 +107,7 @@ main .rights{text-align:left;margin-top:48px;padding:16px 0 0;border-top:1px sol
 .logo-prev img{width:100%;height:100%;object-fit:contain}
 .logo-prev svg{width:44px;height:44px;color:var(--muted)}
 
-main{padding:32px clamp(16px,4vw,48px) 64px;min-width:0;max-width:1180px}
+main{padding:72px clamp(16px,4vw,48px) 64px;min-width:0;max-width:1180px}
 .head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:24px}
 h1{font-size:28px;line-height:1.15;margin:0;font-weight:700;letter-spacing:-.01em}
 .head p{margin:6px 0 0;color:var(--muted);max-width:60ch}
@@ -346,7 +352,9 @@ fieldset.field legend{padding:0;margin-bottom:6px;font-size:13.5px;font-weight:5
   .brand-mark.has-logo{width:96px;height:34px}
   .who{flex-direction:row;align-items:center;margin:0 0 0 auto;border-top:none;border-left:1px solid var(--line);padding:0 0 0 6px}
   .who-id{display:none}
-  .who .tools{margin:0}
+  .who{display:none}
+  .topbar{position:static;height:auto;padding:10px 16px 0}
+  main{padding-top:12px!important}
   .nav button{white-space:nowrap;padding:8px 10px;font-size:14px}
   .grid2,.row2{grid-template-columns:1fr}
   main{padding-top:22px}
@@ -373,16 +381,16 @@ fieldset.field legend{padding:0;margin-bottom:6px;font-size:13.5px;font-weight:5
     <button data-go="config"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>Configurações</button>
     <div class="who">
       <div class="who-id"><div class="name" id="whoName"></div><div id="whoRole"></div></div>
-      <div class="tools">
-        <button type="button" class="icon-btn" data-ui="theme"></button>
-        <button type="button" class="icon-btn" data-ui="fs"></button>
-        <button type="button" class="icon-btn" data-ui="senha" aria-label="Alterar minha senha" title="Alterar minha senha"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M16 7l3 3M14 9l2 2"/></svg></button>
-        <button type="button" class="icon-btn" data-ui="sair" aria-label="Sair" title="Sair"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg></button>
-      </div>
       <div class="foot" id="syncState">Conectando…</div>
     </div>
   </nav>
+  <div class="col">
+    <header class="topbar"><div class="tools" role="toolbar" aria-label="Opções"><button type="button" class="icon-btn" data-ui="theme"></button>
+        <button type="button" class="icon-btn" data-ui="fs"></button>
+        <button type="button" class="icon-btn" data-ui="senha" aria-label="Alterar minha senha" title="Alterar minha senha"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M16 7l3 3M14 9l2 2"/></svg></button>
+        <button type="button" class="icon-btn" data-ui="sair" aria-label="Sair" title="Sair"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg></button></div></header>
   <main id="view"><div class="loading">Carregando dados…</div></main>
+  </div>
 </div>
 
 <div class="auth" id="auth" hidden></div>
