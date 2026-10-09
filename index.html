@@ -715,9 +715,10 @@ const areaById = (id) => state.areas.find(a => a.id === id);
 const sortedAreas = () => [...state.areas].sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
 const trAreas = (t) => Array.isArray(t.areaIds) && t.areaIds.length ? t.areaIds : (t.areaId ? [t.areaId] : []);
 const trInArea = (t, id) => !t.todasAreas && trAreas(t).includes(id);
-const trFor = (t, emp) => t.todasAreas || trAreas(t).includes(emp.areaId);
+const trGrupos = (t) => [t.grupoCipa ? "CIPA" : "", t.grupoBrigada ? "Brigada" : ""].filter(Boolean);
+const trFor = (t, emp) => t.todasAreas || trAreas(t).includes(emp.areaId) || (!!t.grupoCipa && !!emp.cipa) || (!!t.grupoBrigada && !!emp.brigada);
 const trAreaList = (t) => trAreas(t).map(areaById).filter(Boolean).sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
-const trAreaNames = (t) => t.todasAreas ? "Integração" : trAreaList(t).map(a => a.nome).join(", ");
+const trAreaNames = (t) => t.todasAreas ? "Integração" : [...trAreaList(t).map(a => a.nome), ...trGrupos(t)].join(", ");
 const required = (emp) => state.trainings.filter(t => trFor(t, emp));
 const progOf = (empId, trId) => state.progress.find(p => p.employeeId === empId && p.trainingId === trId);
 const watchedOk = (p, t) => !t.videoId || !!(p && p.assistido);
@@ -860,11 +861,12 @@ function trainingCard(t) {
   const concl = state.employees.filter(e => trFor(t, e) && isDone(progOf(e.id, t.id), t)).length;
   const alvo = state.employees.filter(e => trFor(t, e)).length;
   const atr = state.employees.filter(e => trFor(t, e) && prazoInfo(e, t, progOf(e.id, t.id))?.overdue).length;
-  return `<article class="tcard" style="--c:${esc(t.todasAreas ? "var(--accent)" : (a?.cor || "var(--line)"))}">
+  const gr = (t.grupoCipa ? `<span class="badge acc">Grupo CIPA</span>` : "") + (t.grupoBrigada ? `<span class="badge warn">Grupo Brigada</span>` : "");
+  return `<article class="tcard" style="--c:${esc(t.todasAreas ? "var(--accent)" : (a?.cor || (gr ? "var(--accent)" : "var(--line)")))}">
     <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><h3>${esc(t.titulo)}</h3>${t.duracao ? `<span class="small muted" style="white-space:nowrap">${esc(t.duracao)} min</span>` : ""}</div>
     ${t.descricao ? `<p>${esc(t.descricao)}</p>` : ""}
     <div class="meta">
-      ${t.todasAreas ? `<span class="badge acc">Integração · todas as áreas</span>` : al.length ? al.map(areaChip).join("") : areaChip(null)}
+      ${t.todasAreas ? `<span class="badge acc">Integração · todas as áreas</span>` : (al.length ? al.map(areaChip).join("") : gr ? "" : areaChip(null)) + gr}
       ${t.videoId ? `<span class="badge">Vídeo</span>` : `<span class="badge">Sem vídeo</span>`}
       ${t.temTeste ? `<span class="badge warn">Teste · ${(t.perguntas || []).length} perguntas · mín. ${esc(t.notaMinima)}%</span>` : `<span class="badge">Sem teste</span>`}
       ${prazoTexto(t) ? `<span class="badge acc">${esc(prazoTexto(t))}</span>` : ""}
@@ -878,8 +880,12 @@ function viewTreinamentos() {
   const trs = [...state.trainings].sort((a, b) => (a.titulo || "").localeCompare(b.titulo || "", "pt-BR"));
   const areas = sortedAreas();
   const count = (fn) => trs.filter(fn).length;
+  const isCipa = (t) => !t.todasAreas && !!t.grupoCipa, isBrig = (t) => !t.todasAreas && !!t.grupoBrigada;
+  if ((ui.areaFilter === "__cipa" && !count(isCipa)) || (ui.areaFilter === "__brig" && !count(isBrig))) ui.areaFilter = "all";
   const tabs = [`<button class="tab" data-filter="all" aria-pressed="${ui.areaFilter === "all"}">Todas <span class="n">${trs.length}</span></button>`,
     `<button class="tab" data-filter="__integ" aria-pressed="${ui.areaFilter === "__integ"}">Integração <span class="n">${count(t => t.todasAreas)}</span></button>`,
+    ...(count(isCipa) ? [`<button class="tab" data-filter="__cipa" aria-pressed="${ui.areaFilter === "__cipa"}">Grupo CIPA <span class="n">${count(isCipa)}</span></button>`] : []),
+    ...(count(isBrig) ? [`<button class="tab" data-filter="__brig" aria-pressed="${ui.areaFilter === "__brig"}">Grupo Brigada <span class="n">${count(isBrig)}</span></button>`] : []),
     ...areas.map(a => `<button class="tab" data-filter="${esc(a.id)}" aria-pressed="${ui.areaFilter === a.id}"><span class="dot" style="background:${esc(a.cor)}"></span>${esc(a.nome)} <span class="n">${count(t => trInArea(t, a.id))}</span></button>`)].join("");
 
   let body = "";
@@ -888,13 +894,14 @@ function viewTreinamentos() {
     body = `<div class="empty"><h3>Nenhum treinamento cadastrado</h3><p>Cadastre o primeiro treinamento, envie o vídeo e decida se ele terá teste de conhecimento.</p>${canEd("treinamentos") ? `<button class="btn primary" data-act="new-tr">${ICON.plus}Cadastrar treinamento</button>` : ""}</div>`;
   } else if (ui.areaFilter === "all") {
     body = block("Integração · todas as áreas", null, trs.filter(t => t.todasAreas))
+      + block("Grupo CIPA", null, trs.filter(isCipa)) + block("Grupo Brigada de incêndio", null, trs.filter(isBrig))
       + areas.map(a => block(a.nome, a.cor, trs.filter(t => trInArea(t, a.id)))).join("")
-      + block("Sem área", null, trs.filter(t => !t.todasAreas && !trAreaList(t).length));
+      + block("Sem área", null, trs.filter(t => !t.todasAreas && !trAreaList(t).length && !trGrupos(t).length));
   } else {
-    const list = ui.areaFilter === "__integ" ? trs.filter(t => t.todasAreas) : trs.filter(t => trInArea(t, ui.areaFilter));
+    const list = ui.areaFilter === "__integ" ? trs.filter(t => t.todasAreas) : ui.areaFilter === "__cipa" ? trs.filter(isCipa) : ui.areaFilter === "__brig" ? trs.filter(isBrig) : trs.filter(t => trInArea(t, ui.areaFilter));
     body = list.length ? `<div class="cards">${list.map(trainingCard).join("")}</div>` : `<div class="empty"><h3>Nenhum treinamento nesta área</h3>${canEd("treinamentos") ? `<button class="btn primary" data-act="new-tr">${ICON.plus}Cadastrar treinamento</button>` : ""}</div>`;
   }
-  return `<div class="head"><div><h1>Treinamentos</h1><p>Organizados por área. Os de integração valem para todos os funcionários.</p></div>
+  return `<div class="head"><div><h1>Treinamentos</h1><p>Organizados por área. Os de integração valem para todos os funcionários; os de CIPA e Brigada, para os membros de cada grupo.</p></div>
     ${canEd("treinamentos") ? `<button class="btn primary" data-act="new-tr">${ICON.plus}Novo treinamento</button>` : ""}</div>
     ${trs.length ? `<div class="tabs" role="group" aria-label="Filtrar por área">${tabs}</div>` : ""}${body}`;
 }
@@ -1530,7 +1537,9 @@ function formTraining(t) {
   if (!perguntas.length) perguntas = [{ texto: "", opcoes: ["", ""], correta: 0 }];
   let file = null, removeVideo = false;
   const canUpload = !!caps.assets || caps.mode === "local";
-  const selAreas = t ? trAreas(t) : (ui.areaFilter !== "all" && ui.areaFilter !== "__integ" ? [ui.areaFilter] : []);
+  const selAreas = t ? trAreas(t) : (!["all", "__integ", "__cipa", "__brig"].includes(ui.areaFilter) ? [ui.areaFilter] : []);
+  const selCipa = t ? !!t.grupoCipa : ui.areaFilter === "__cipa", selBrig = t ? !!t.grupoBrigada : ui.areaFilter === "__brig";
+  const nCipa = state.employees.filter(e => e.cipa).length, nBrig = state.employees.filter(e => e.brigada).length;
 
   const d = openModal(t ? "Editar treinamento" : "Novo treinamento", `
     <div class="field"><label for="tTit">Título</label><input type="text" id="tTit" value="${esc(t?.titulo || "")}" placeholder="Ex.: Segurança no trabalho e uso de EPI" required></div>
@@ -1540,6 +1549,9 @@ function formTraining(t) {
     <fieldset class="field" id="areaField"><legend>Áreas</legend>
       <div class="pick">${sortedAreas().map(a => `<label><input type="checkbox" name="tArea" value="${esc(a.id)}" ${selAreas.includes(a.id) ? "checked" : ""}><span class="dot" style="background:${esc(a.cor)}"></span>${esc(a.nome)}</label>`).join("")}</div>
       <span class="hint" id="areaHint"></span></fieldset>
+    <fieldset class="field" id="grupoField"><legend>Grupos</legend>
+      <div class="pick"><label><input type="checkbox" id="tCipa" ${selCipa ? "checked" : ""}>Membros da CIPA <span class="muted small">${nCipa}</span></label><label><input type="checkbox" id="tBrig" ${selBrig ? "checked" : ""}>Brigada de incêndio <span class="muted small">${nBrig}</span></label></div>
+      <span class="hint" id="grupoHint"></span></fieldset>
     <div class="row2"><div class="field"><label for="tDur">Duração (minutos)</label><input type="number" id="tDur" min="1" value="${esc(t?.duracao || "")}"></div><div></div></div>
     <div class="row2"><div class="field"><label for="tPrazoTipo">Prazo para concluir</label><select id="tPrazoTipo">
       <option value="" ${!t?.prazoTipo ? "selected" : ""}>Sem prazo</option>
@@ -1554,9 +1566,9 @@ function formTraining(t) {
     <label class="switch"><input type="checkbox" id="tTeste" ${t?.temTeste ? "checked" : ""}><span><b>Aplicar teste de conhecimento</b><span class="hint">O funcionário responde perguntas depois do vídeo e precisa atingir a nota mínima para concluir.</span></span></label>
     <div id="testBox" style="display:flex;flex-direction:column;gap:12px"></div>`,
     async (btn) => {
-      const titulo = $("#tTit").value.trim(), todasAreas = $("#tTodas").checked, areaIds = $$("input[name=tArea]:checked").map(x => x.value), temTeste = $("#tTeste").checked;
+      const titulo = $("#tTit").value.trim(), todasAreas = $("#tTodas").checked, areaIds = $$("input[name=tArea]:checked").map(x => x.value), grupoCipa = !todasAreas && $("#tCipa").checked, grupoBrigada = !todasAreas && $("#tBrig").checked, temTeste = $("#tTeste").checked;
       if (!titulo) { toast("Informe o título do treinamento."); return false; }
-      if (!todasAreas && !areaIds.length) { toast("Marque pelo menos uma área ou deixe obrigatório para todas."); return false; }
+      if (!todasAreas && !areaIds.length && !grupoCipa && !grupoBrigada) { toast("Marque pelo menos uma área ou grupo, ou deixe obrigatório para todas."); return false; }
       const prazoTipo = $("#tPrazoTipo").value;
       let prazoDias = "", prazoData = "";
       if (prazoTipo === "dias") { prazoDias = String(parseInt($("#tPrazoDias").value, 10) || ""); if (!(+prazoDias > 0)) { toast("Informe em quantos dias o treinamento deve ser concluído."); return false; } }
@@ -1582,7 +1594,7 @@ function formTraining(t) {
       } else if (removeVideo && t?.videoId) Store.deleteVideo(t.videoId);
       btn.textContent = "Salvando…";
       await Store.save("trainings", t?.id || uid(), {
-        titulo, descricao: $("#tDesc").value.trim(), conteudo: $("#tProg").value.split("\n").map(x => x.trim()).filter(Boolean).join("\n"), todasAreas, areaIds: todasAreas ? [] : areaIds, areaId: todasAreas ? "" : areaIds[0],
+        titulo, descricao: $("#tDesc").value.trim(), conteudo: $("#tProg").value.split("\n").map(x => x.trim()).filter(Boolean).join("\n"), todasAreas, areaIds: todasAreas ? [] : areaIds, areaId: todasAreas ? "" : (areaIds[0] || ""), grupoCipa, grupoBrigada,
         duracao: $("#tDur").value ? String(parseInt($("#tDur").value, 10)) : "",
         certificado: $("#tCert").checked, videoId, videoNome: file ? file.name : (removeVideo ? "" : (t?.videoNome || "")),
         temTeste, notaMinima, perguntas: temTeste ? clean : [], prazoTipo, prazoDias, prazoData, criadoEm: t?.criadoEm || new Date().toISOString()
@@ -1593,9 +1605,15 @@ function formTraining(t) {
   const syncArea = () => {
     const all = $("#tTodas").checked, boxes = $$("input[name=tArea]"), n = boxes.filter(x => x.checked).length;
     $("#areaField").classList.toggle("pick-off", all); boxes.forEach(x => x.disabled = all);
-    $("#areaHint").textContent = all ? "Obrigatório para todas as áreas." : n ? `${n} área${n > 1 ? "s" : ""} selecionada${n > 1 ? "s" : ""}. Os funcionários de cada área marcada recebem este treinamento.` : "Marque uma ou mais áreas.";
+    const gc = $("#tCipa").checked, gb = $("#tBrig").checked;
+    $("#areaHint").textContent = all ? "Obrigatório para todas as áreas." : n ? `${n} área${n > 1 ? "s" : ""} selecionada${n > 1 ? "s" : ""}. Os funcionários de cada área marcada recebem este treinamento.` : (gc || gb) ? "Opcional quando um grupo está marcado." : "Marque uma ou mais áreas, ou um grupo abaixo.";
+    $("#grupoField").classList.toggle("pick-off", all); $("#tCipa").disabled = all; $("#tBrig").disabled = all;
+    const nomes = [gc ? `membros da CIPA (${nCipa})` : "", gb ? `brigadistas (${nBrig})` : ""].filter(Boolean);
+    $("#grupoHint").textContent = all ? "Já vale para todos os funcionários." : nomes.length
+      ? `Vai automaticamente para todos os ${nomes.join(" e ")}, de qualquer área. Quem entrar no grupo depois também recebe.`
+      : "Marque para enviar a todos os funcionários cadastrados como membros da CIPA ou da brigada.";
   };
-  $("#tTodas").onchange = syncArea; $$("input[name=tArea]").forEach(x => x.onchange = syncArea); syncArea();
+  $("#tTodas").onchange = syncArea; $$("input[name=tArea]").forEach(x => x.onchange = syncArea); $("#tCipa").onchange = syncArea; $("#tBrig").onchange = syncArea; syncArea();
   let pDias = t?.prazoDias || "30", pData = t?.prazoData || "";
   const syncPrazo = () => {
     const tipo = $("#tPrazoTipo").value, box = $("#prazoVal"), hint = $("#prazoHint");
