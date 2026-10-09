@@ -732,6 +732,13 @@ function statusBadge(t, p) {
   return `<span class="badge">Pendente</span>`;
 }
 /* prazo: data fixa ou N dias a partir da admissão (ou da criação do treinamento, o que for mais recente) */
+function monthKeyOf(emp, t, ref) {
+  let d = ref === "prazo" ? deadlineOf(emp, t) : ref === "concl" ? (isDone(progOf(emp.id, t.id), t) ? progOf(emp.id, t.id).concluidoEm : "") : t.criadoEm;
+  if (!d) return "";
+  if (typeof d === "string") d = /^\d{4}-\d{2}-\d{2}$/.test(d) ? parseDay(d) : new Date(d);
+  return d && !isNaN(d) ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}` : "";
+}
+const monthLabel = (k) => { const [y, m] = k.split("-").map(Number); const s = new Date(y, m - 1, 1).toLocaleDateString("pt-BR", { month: "long", year: "numeric" }); return s.charAt(0).toUpperCase() + s.slice(1); };
 function deadlineOf(emp, t) {
   if (t.prazoTipo === "data" && t.prazoData) return parseDay(t.prazoData);
   if (t.prazoTipo === "dias" && +t.prazoDias > 0) {
@@ -1280,11 +1287,25 @@ function viewEstudar() {
   }
   let body = "";
   if (emp) {
-    const req = required(emp).sort((a, b) => (b.todasAreas ? 1 : 0) - (a.todasAreas ? 1 : 0));
+    const reqAll = required(emp).sort((a, b) => (b.todasAreas ? 1 : 0) - (a.todasAreas ? 1 : 0));
     const s = empStats(emp);
-    body = req.length ? `<div class="panel" style="margin-bottom:16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+    const ref = ui.studyRef || "cad", mes = ui.studyMes || "";
+    const mk = (t) => monthKeyOf(emp, t, ref);
+    const meses = [...new Set([...reqAll.map(mk).filter(Boolean), ...(mes ? [mes] : [])])].sort().reverse();
+    const req = mes ? reqAll.filter(t => mk(t) === mes) : reqAll;
+    const refTxt = { cad: "cadastrados", prazo: "com prazo", concl: "concluídos" }[ref];
+    const filtro = `<div class="filters" style="align-items:flex-end">
+        <div class="field" style="max-width:300px"><label for="stMes">Mês</label><select id="stMes"><option value="">Todos os meses</option>${meses.map(m => `<option value="${m}" ${m === mes ? "selected" : ""}>${esc(monthLabel(m))}</option>`).join("")}</select></div>
+        <div class="field" style="max-width:300px"><label for="stRef">Considerar o mês de</label><select id="stRef">
+          <option value="cad" ${ref === "cad" ? "selected" : ""}>Cadastro do treinamento</option>
+          <option value="prazo" ${ref === "prazo" ? "selected" : ""}>Prazo para concluir</option>
+          <option value="concl" ${ref === "concl" ? "selected" : ""}>Conclusão</option></select></div>
+        ${mes ? `<button class="btn ghost" id="stLimpar" style="flex:none">Limpar</button>` : ""}
+      </div>${mes ? `<p class="small muted" style="margin:-4px 0 12px">${req.length} de ${reqAll.length} treinamento${reqAll.length > 1 ? "s" : ""} ${refTxt} em ${esc(monthLabel(mes).toLowerCase())}.</p>` : ""}`;
+    body = reqAll.length ? `<div class="panel" style="margin-bottom:16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
         <div style="flex:1;min-width:200px"><b>${esc(emp.nome)}</b><div class="small muted">${esc(areaById(emp.areaId)?.nome || "Sem área")}${emp.cargo ? " · " + esc(emp.cargo) : ""}</div></div>
         <div style="flex:1;min-width:200px"><div class="small muted" style="margin-bottom:6px">${s.done} de ${s.total} concluídos</div><div class="bar"><i style="width:${pct(s.done, s.total)}%"></i></div></div></div>
+      ${filtro}${!req.length ? `<div class="empty"><h3>Nenhum treinamento ${{ cad: "cadastrado", prazo: "com prazo", concl: "concluído" }[ref]} em ${esc(monthLabel(mes).toLowerCase())}</h3><p>Escolha outro mês ou mude o critério acima.</p></div>` : ""}
       <div class="track">${req.map(t => {
         const p = progOf(emp.id, t.id), done = isDone(p, t), part = !done && p && p.assistido, pi = prazoInfo(emp, t, p);
         return `<button class="step ${done ? "done" : part ? "part" : ""}" data-act="open-aula" data-id="${esc(t.id)}">
@@ -1801,6 +1822,10 @@ function bindView() {
   };
   const pickEl = $("#empPick");
   if (pickEl) pickEl.onchange = () => { ui.studyEmp = pickEl.value; ui.studyTraining = null; render(); };
+  const stMes = $("#stMes"), stRef = $("#stRef"), stLimpar = $("#stLimpar");
+  if (stMes) stMes.onchange = () => { ui.studyMes = stMes.value; render(); };
+  if (stRef) stRef.onchange = () => { ui.studyRef = stRef.value; render(); };
+  if (stLimpar) stLimpar.onclick = () => { ui.studyMes = ""; render(); };
   initPlayer();
   const qf = $("#quizForm");
   if (qf) qf.onsubmit = async (ev) => {
