@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icons/partner-treinamentos-192.png">
+<script defer src="./install-app.js"></script>
 <title>Plataforma de Treinamento e Integração</title>
 <link rel="icon" id="favicon" href="data:,">
 <script>try{var t=localStorage.getItem("treinamentos-tema");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
@@ -780,7 +783,7 @@ function can(k) {
 }
 const canEd = (mod) => caps.canWrite && can(mod + ".editar");
 const ROUTES = { painel: "painel", treinamentos: "treinamentos.ver", funcionarios: "funcionarios.ver", areas: "areas.ver", estudar: "estudar", certificados: "certificados", acessos: "usuarios", config: "config" };
-const routeOk = (r) => !!ROUTES[r] && can(ROUTES[r]);
+const routeOk = (r) => r === "config" ? !!me : !!ROUTES[r] && can(ROUTES[r]);
 const firstRoute = () => Object.keys(ROUTES).find(routeOk) || null;
 async function saveConfig(patch) { const { id, ...cur } = cfg(); await Store.save("config", "sistema", { ...cur, ...patch }); }
 
@@ -1330,7 +1333,13 @@ function formMyPass() {
 function viewConfig() {
   const c = cfg(), logo = typeof c.logo === "string" && c.logo.startsWith("data:image/") ? c.logo : "";
   const ro = !caps.canWrite;
-  return `<div class="head"><div><h1>Configurações</h1><p>Identidade do sistema: logo padrão, nome, direitos reservados e certificados.</p></div></div>
+  const installation = `<div class="head"><h1>Configurações</h1></div>
+    <section class="panel" style="margin-bottom:16px"><h2>Instalar Partner Treinamentos</h2>
+      <button class="btn primary" type="button" data-install-app>Instalar aplicativo</button>
+      <p class="hint" data-install-message role="status" hidden></p>
+    </section>`;
+  if (!can("config")) return installation;
+  return installation + `
     <section class="panel" style="margin-bottom:16px"><h2>Logo padrão do sistema</h2>
       <div class="logo-row"><div class="logo-prev">${logo ? `<img src="${esc(logo)}" alt="Logo atual">` : ICON.image}</div>
         <div style="display:flex;flex-direction:column;gap:10px">
