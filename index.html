@@ -1764,6 +1764,7 @@ function formTraining(t) {
   let perguntas = (t?.perguntas || []).map(q => ({ texto: q.texto, opcoes: [...q.opcoes], correta: q.correta }));
   if (!perguntas.length) perguntas = [{ texto: "", opcoes: ["", ""], correta: 0 }];
   let file = null, removeVideo = false;
+  const useVideoLink = caps.firebase;
   const canUpload = !!caps.assets || caps.mode === "local";
   const selAreas = t ? trAreas(t) : (!["all", "__integ", "__cipa", "__brig"].includes(ui.areaFilter) ? [ui.areaFilter] : []);
   const selCipa = t ? !!t.grupoCipa : ui.areaFilter === "__cipa", selBrig = t ? !!t.grupoBrigada : ui.areaFilter === "__brig";
@@ -1789,7 +1790,7 @@ function formTraining(t) {
     <span class="hint" id="prazoHint" style="margin-top:-8px"></span>
     <div class="field"><span class="lbl">Vídeo do treinamento</span>
       <div id="videoBox"></div><p id="videoUploadStatus" class="hint" role="alert" style="margin:0"></p>
-      <span class="hint">MP4 ou WebM, até ${caps.mode === "local" ? "1 GB" : "500 MB"}.</span></div>
+      <span class="hint">${useVideoLink ? "Cole o endereço HTTPS direto de um MP4 ou WebM. Deixe em branco para salvar sem vídeo." : `MP4 ou WebM, até ${caps.mode === "local" ? "1 GB" : "500 MB"}.`}</span></div>
     <label class="switch"><input type="checkbox" id="tCert" ${t?.certificado === false ? "" : "checked"}><span><b>Emitir certificado ao concluir</b><span class="hint">Libera o certificado com nome, carga horária, data de conclusão e nota.</span></span></label>
     <label class="switch"><input type="checkbox" id="tTeste" ${t?.temTeste ? "checked" : ""}><span><b>Aplicar teste de conhecimento</b><span class="hint">O funcionário responde perguntas depois do vídeo e precisa atingir a nota mínima para concluir.</span></span></label>
     <div id="testBox" style="display:flex;flex-direction:column;gap:12px"></div>`,
@@ -1815,16 +1816,35 @@ function formTraining(t) {
       }
       const selectedVideo = file;
       const previousVideoId = t?.videoId || null;
+      const status = $("#videoUploadStatus");
+      let videoLink = null;
+      if (useVideoLink) {
+        const value = $("#tVideoLink").value.trim();
+        if (value === previousVideoId) videoLink = previousVideoId;
+        else if (value) {
+          try {
+            const url = new URL(value);
+            if (url.protocol !== "https:" || url.username || url.password || !/\.(mp4|webm)$/i.test(url.pathname)) throw new Error();
+            videoLink = url.href;
+          } catch {
+            status.textContent = "Informe um link HTTPS direto para um arquivo .mp4 ou .webm.";
+            $("#tVideoLink").focus();
+            return false;
+          }
+        }
+      }
       const record = {
         titulo, descricao: $("#tDesc").value.trim(), conteudo: $("#tProg").value.split("\n").map(x => x.trim()).filter(Boolean).join("\n"), todasAreas, areaIds: todasAreas ? [] : areaIds, areaId: todasAreas ? "" : (areaIds[0] || ""), grupoCipa, grupoBrigada,
         duracao: $("#tDur").value ? String(parseInt($("#tDur").value, 10)) : "",
-        certificado: $("#tCert").checked, videoId: removeVideo ? null : previousVideoId, videoNome: selectedVideo ? selectedVideo.name : (removeVideo ? "" : (t?.videoNome || "")),
+        certificado: $("#tCert").checked, videoId: useVideoLink ? videoLink : (removeVideo ? null : previousVideoId),
+        videoNome: useVideoLink
+          ? (videoLink ? (videoLink === previousVideoId && t?.videoNome || "Vídeo por link") : "")
+          : (selectedVideo ? selectedVideo.name : (removeVideo ? "" : (t?.videoNome || ""))),
         temTeste, notaMinima, perguntas: temTeste ? clean : [], prazoTipo, prazoDias, prazoData, criadoEm: t?.criadoEm || new Date().toISOString()
       };
       const dialog = btn.closest("dialog");
       const closeButtons = $$("[data-close]", dialog);
       const preventClose = event => event.preventDefault();
-      const status = $("#videoUploadStatus", dialog);
       closeButtons.forEach(button => { button.disabled = true; });
       dialog.addEventListener("cancel", preventClose);
       status.textContent = "";
@@ -1838,7 +1858,7 @@ function formTraining(t) {
         }
         btn.textContent = "Salvando…";
         await Store.save("trainings", t?.id || uid(), record);
-        if (previousVideoId && previousVideoId !== record.videoId) Store.deleteVideo(previousVideoId);
+        if (!useVideoLink && previousVideoId && previousVideoId !== record.videoId) Store.deleteVideo(previousVideoId);
       } catch (error) {
         if (selectedVideo && record.videoId && record.videoId !== previousVideoId) Store.deleteVideo(record.videoId);
         status.textContent = error.message || "Não foi possível salvar o treinamento.";
@@ -1879,6 +1899,11 @@ function formTraining(t) {
 
   function drawVideo() {
     const box = $("#videoBox");
+    if (useVideoLink) {
+      box.innerHTML = `<label for="tVideoLink" class="small muted">Link direto do vídeo</label>
+        <input type="url" id="tVideoLink" placeholder="https://exemplo.com/aula.mp4" value="${esc(/^https?:/.test(t?.videoId || "") ? t.videoId : "")}" style="width:100%">`;
+      return;
+    }
     const existing = t?.videoId && !removeVideo && !file;
     if (!canUpload) { box.innerHTML = `<div class="notice" style="margin:0">${existing ? "Vídeo atual mantido. " : ""}O envio de vídeos não está disponível neste acesso${caps.mode === "local" ? " (modo local)" : ""}.</div>`; return; }
     if (file || existing) {
@@ -1989,7 +2014,7 @@ function bindView() {
         const t = state.trainings.find(x => x.id === id);
         if (await askConfirm("Excluir treinamento?", `“${t.titulo}” e o histórico de quem o realizou serão apagados.`)) {
           await Promise.all(state.progress.filter(p => p.trainingId === id).map(p => Store.remove("progress", p.id)));
-          if (t.videoId) Store.deleteVideo(t.videoId);
+          if (t.videoId && !caps.firebase) Store.deleteVideo(t.videoId);
           await Store.remove("trainings", id); toast("Treinamento excluído.");
         }
       }
