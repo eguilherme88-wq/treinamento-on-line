@@ -639,7 +639,7 @@ const Store = {
     let unsubs = [];
     const stop = () => { unsubs.forEach(u => { try { u(); } catch {} }); unsubs = []; PRIV.forEach(c => state[c] = []); };
     Store.startSession = (uid) => {
-      stop(); authUid = uid; caps.mode = "loading";
+      stop(); drivePromptShown = false; authUid = uid; caps.mode = "loading";
       const seen = new Set();
       PRIV.forEach(col => {
         unsubs.push(db.collection(col).onSnapshot(snap => {
@@ -661,7 +661,7 @@ const Store = {
     fb.auth.onChange(async (user) => {
       if (caps.settingUp) return;
       if (user) { Store.startSession(user.uid); return; }
-      stop(); authUid = null; me = null;
+      stop(); driveAuthorization = null; drivePromptShown = false; authUid = null; me = null;
       caps.setupDone = await fb.auth.setupDone();
       caps.mode = "shared";
       render();
@@ -787,6 +787,7 @@ async function saveConfig(patch) { const { id, ...cur } = cfg(); await Store.sav
 /* ---------- sessão ---------- */
 let authUid = null, authMsg = "";
 let driveAuthorization = null;
+let drivePromptShown = false;
 const sessionUser = () => authUid ? state.users.find(u => u.id === authUid && u.ativo !== false) || null : null;
 const loginTry = { fails: 0, until: 0 };
 function logout() {
@@ -920,6 +921,63 @@ const progOf = (empId, trId) => state.progress.find(p => p.employeeId === empId 
 const DRIVE_OAUTH_CLIENT_ID = "36525471973-gp0j31u40afcskgdrbmgl7k1l1lqdlom.apps.googleusercontent.com";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 
+function authorizeDrive() {
+  const user = authUid;
+  return new Promise((resolve, reject) => {
+    const oauth = window.google?.accounts?.oauth2;
+    if (!user || !oauth) {
+      reject(new Error("O acesso ao Google ainda não está pronto. Aguarde e tente novamente."));
+      return;
+    }
+    const hint = cfg().driveAccount;
+    oauth.initTokenClient({
+      client_id: DRIVE_OAUTH_CLIENT_ID,
+      scope: DRIVE_SCOPE,
+      include_granted_scopes: false,
+      ...(hint ? { login_hint: hint } : {}),
+      error_callback: () => reject(new Error("A autorização foi fechada ou bloqueada pelo navegador.")),
+      callback: result => {
+        if (!result.access_token || user !== authUid) {
+          reject(new Error("O Google não autorizou o acesso ao Drive."));
+          return;
+        }
+        const authorization = {
+          token: result.access_token,
+          user,
+          expiresAt: Date.now() + Math.max(0, Number(result.expires_in) || 0) * 1000
+        };
+        driveAuthorization = authorization;
+        resolve(authorization);
+      }
+    }).requestAccessToken({ prompt: "" });
+  });
+}
+
+function offerDriveAuthorization() {
+  const email = cfg().driveAccount;
+  if (!email || !DRIVE_OAUTH_CLIENT_ID || drivePromptShown || driveAuthorization?.user === authUid) return;
+  if (document.querySelector("dialog[open]") || !can("estudar") || !state.trainings.some(t => driveVideo(t.videoId))) return;
+  drivePromptShown = true;
+  const dialog = openModal("Acesso aos vídeos do treinamento", `
+    <p>Na janela do Google, use a conta indicada pelo administrador:</p>
+    <p><strong>${esc(email)}</strong></p>
+    <p class="small muted">Você pode autorizar agora ou quando abrir uma aula com vídeo do Drive.</p>
+    <p id="driveLoginStatus" role="alert" class="small"></p>`,
+    async () => {
+      const status = $("#driveLoginStatus", dialog);
+      status.textContent = "Aguardando autorização do Google…";
+      try {
+        await authorizeDrive();
+        const player = $("#playerWrap");
+        if (player) player.querySelector("[data-drive-load]:not(:disabled)")?.click();
+      } catch (error) {
+        status.textContent = error.message;
+        return false;
+      }
+    }, "Continuar com Google");
+  $("[data-close]:not([aria-label])", dialog).textContent = "Agora não";
+}
+
 function driveVideo(value) {
   try {
     const url = new URL(value);
@@ -1022,6 +1080,7 @@ function render() {
   if (oldWrap && slot && oldWrap.dataset.key === slot.dataset.key) slot.replaceWith(oldWrap);
   else if (oldWrap) closePlayer(oldWrap);
   bindView();
+  offerDriveAuthorization();
 }
 
 /* ---------- Painel ---------- */
@@ -1283,6 +1342,8 @@ function viewConfig() {
         <div class="field"><label for="cNome">Nome do sistema</label><input type="text" id="cNome" value="${esc(c.nome || "")}" placeholder="Treinamentos" ${ro ? "disabled" : ""}></div>
         <div class="field"><label for="cSub">Subtítulo</label><input type="text" id="cSub" value="${esc(c.subtitulo || "")}" placeholder="Integração e capacitação" ${ro ? "disabled" : ""}></div>
         <div class="field"><label for="cTit">Titular dos direitos (empresa)</label><input type="text" id="cTit" value="${esc(c.titular || "")}" placeholder="Ex.: Minha Empresa Ltda." ${ro ? "disabled" : ""}><span class="hint">Aparece no rodapé: “${esc(rightsText())}” e no topo dos certificados.</span></div>
+        <h2 style="margin:10px 0 0">Vídeos do Google Drive</h2>
+        <div class="field"><label for="cDriveAccount">Conta Google indicada para os vídeos</label><input type="email" id="cDriveAccount" value="${esc(c.driveAccount || "")}" placeholder="conta@exemplo.com" ${ro ? "disabled" : ""}><span class="hint">O endereço aparece no aviso após o login. Deixe em branco para autorizar somente ao abrir uma aula.</span></div>
         <h2 style="margin:10px 0 0">Certificados</h2>
         <div class="field"><label for="cCid">Cidade</label><input type="text" id="cCid" value="${esc(c.cidade || "")}" placeholder="Ex.: Joinville/SC" ${ro ? "disabled" : ""}><span class="hint">Aparece antes da data no certificado.</span></div>
         <div class="row2"><div class="field"><label for="cA1">Assinatura 1 · nome</label><input type="text" id="cA1" value="${esc(c.ass1Nome || "")}" ${ro ? "disabled" : ""}></div>
@@ -1684,30 +1745,15 @@ function initPlayer() {
         vid.src = currentVideoUrl;
       } catch (error) { fail(error.message || "Erro ao carregar o vídeo do Drive."); }
     };
-    load.onclick = () => {
-      const oauth = window.google?.accounts?.oauth2;
-      if (!oauth) { fail("O login do Google ainda não carregou. Aguarde e tente novamente."); return; }
+    load.onclick = async () => {
       load.disabled = true;
       status.textContent = "Aguardando autorização do Google…";
       try {
-        oauth.initTokenClient({
-          client_id: DRIVE_OAUTH_CLIENT_ID,
-          scope: DRIVE_SCOPE,
-          include_granted_scopes: false,
-          error_callback: () => fail("A autorização foi fechada ou bloqueada pelo navegador."),
-          callback: async result => {
-            if (download.signal.aborted) return;
-            if (!result.access_token) { fail("O Google não autorizou o acesso ao Drive."); return; }
-            const authorization = {
-              token: result.access_token,
-              user: authUid,
-              expiresAt: Date.now() + Math.max(0, Number(result.expires_in) || 0) * 1000
-            };
-            driveAuthorization = authorization;
-            await fetchDriveVideo(authorization);
-          }
-        }).requestAccessToken({ prompt: "" });
-      } catch { fail("Confira o ID OAuth e a origem autorizada nas configurações do Google Cloud."); }
+        const saved = driveAuthorization;
+        const valid = saved?.user === authUid && saved.expiresAt > Date.now() + 15_000;
+        await fetchDriveVideo(valid ? saved : await authorizeDrive());
+      }
+      catch (error) { fail(error.message); }
     };
     if (authUid && driveAuthorization?.user === authUid && driveAuthorization.expiresAt > Date.now() + 15_000) {
       fetchDriveVideo(driveAuthorization);
@@ -1795,7 +1841,7 @@ function openModal(title, bodyHtml, onSubmit, submitLabel = "Salvar") {
   $("#mform").onsubmit = async (e) => {
     e.preventDefault();
     const btn = $("#msubmit"); btn.disabled = true; const old = btn.textContent;
-    try { const ok = await onSubmit(btn); if (ok !== false) d.close(); }
+    try { const ok = await onSubmit(btn); if (ok !== false && d.contains(btn) && d.open) d.close(); }
     catch (err) { toast(err.message || "Algo deu errado."); }
     finally { btn.disabled = false; btn.textContent = old; }
   };
@@ -2085,7 +2131,7 @@ function bindView() {
   if (cf) cf.onsubmit = async (ev) => {
     ev.preventDefault();
     if (!can("config")) return;
-    try { await saveConfig({ nome: $("#cNome").value.trim(), subtitulo: $("#cSub").value.trim(), titular: $("#cTit").value.trim(), cidade: $("#cCid").value.trim(), ass1Nome: $("#cA1").value.trim(), ass1Cargo: $("#cA1c").value.trim(), ass2Nome: $("#cA2").value.trim(), ass2Cargo: $("#cA2c").value.trim() }); toast("Configurações salvas."); }
+    try { await saveConfig({ nome: $("#cNome").value.trim(), subtitulo: $("#cSub").value.trim(), titular: $("#cTit").value.trim(), cidade: $("#cCid").value.trim(), driveAccount: $("#cDriveAccount").value.trim(), ass1Nome: $("#cA1").value.trim(), ass1Cargo: $("#cA1c").value.trim(), ass2Nome: $("#cA2").value.trim(), ass2Cargo: $("#cA2c").value.trim() }); toast("Configurações salvas."); }
     catch (e) { toast(e.message); }
   };
   v.onclick = async (ev) => {
