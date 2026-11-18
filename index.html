@@ -6,6 +6,156 @@
 <title>Plataforma de Treinamento e Integração</title>
 <link rel="icon" id="favicon" href="data:,">
 <script>try{var t=localStorage.getItem("treinamentos-tema");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<script>window.__fb = new Promise(function (r) { window.__fbResolve = r; });</script>
+<script type="module">
+  /* ---------- Firebase (projeto treinamentos-online) ---------- */
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js";
+  import { getFirestore, collection, doc, getDoc, setDoc, deleteDoc, onSnapshot, writeBatch } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js";
+  import { getAuth, setPersistence, browserSessionPersistence, inMemoryPersistence, onAuthStateChanged, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js";
+  import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject, setMaxUploadRetryTime, setMaxOperationRetryTime } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-storage.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyCISpLqMQoOymOcB2qjcV4sA1lRoQsmtyM",
+    authDomain: "treinamentos-online.firebaseapp.com",
+    projectId: "treinamentos-online",
+    storageBucket: "treinamentos-online.firebasestorage.app",
+    messagingSenderId: "36525471973",
+    appId: "1:36525471973:web:abfc890301890c3e2b7c0c",
+    measurementId: "G-GPRHE6YV24"
+  };
+
+  try {
+    const app = initializeApp(firebaseConfig);
+    const fs = getFirestore(app);
+    const st = getStorage(app);
+    setMaxUploadRetryTime(st, 60_000);
+    setMaxOperationRetryTime(st, 30_000);
+    const clean = (d) => JSON.parse(JSON.stringify(d ?? {}));
+    const mapErr = (e) => {
+      const code = e && e.code;
+      const err = new Error(e && e.message || "erro");
+      err.code = code === "resource-exhausted" ? "quota_exceeded" : code === "permission-denied" ? "permission_denied" : code;
+      if (err.code === "permission_denied") err.message = "Você não tem permissão para essa alteração.";
+      return err;
+    };
+    const db = {
+      collection(name) {
+        const c = collection(fs, name);
+        return {
+          onSnapshot: (next, onErr) => onSnapshot(c, next, (e) => onErr && onErr(mapErr(e))),
+          doc(id) {
+            const r = doc(fs, name, id);
+            return {
+              set: (data) => setDoc(r, clean(data)).catch((e) => { throw mapErr(e); }),
+              delete: () => deleteDoc(r).catch((e) => { throw mapErr(e); })
+            };
+          }
+        };
+      },
+      async getLogin(login) { const d = await getDoc(doc(fs, "logins", login)); return d.exists() ? d.data() : null; },
+      /* grava muitos documentos de uma vez (importação de backup) */
+      async bulk(ops) {
+        for (let i = 0; i < ops.length; i += 400) {
+          const b = writeBatch(fs);
+          ops.slice(i, i + 400).forEach((o) => {
+            const r = doc(fs, o.col, o.id);
+            if (o.del) b.delete(r); else b.set(r, clean(o.data));
+          });
+          try { await b.commit(); } catch (e) { throw mapErr(e); }
+        }
+      }
+    };
+    const assets = {
+      async upload(file, onProgress) {
+        const ext = (/\.(mp4|webm)$/i.exec(file.name || "") || [, "mp4"])[1].toLowerCase();
+        const r = ref(st, "videos/" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8) + "." + ext);
+        const task = uploadBytesResumable(r, file, { contentType: file.type || (ext === "webm" ? "video/webm" : "video/mp4") });
+        const unsubscribe = task.on("state_changed", snapshot => {
+          onProgress?.(Math.min(100, Math.floor(100 * snapshot.bytesTransferred / snapshot.totalBytes)));
+        });
+        try { await task; }
+        finally { unsubscribe(); }
+        try { return { id: await getDownloadURL(r) }; }
+        catch (e) {
+          deleteObject(r).catch(() => {});
+          throw e;
+        }
+      },
+      async delete(url) { try { await deleteObject(ref(st, url)); } catch {} }
+    };
+    /* ---------- login (Firebase Authentication) ----------
+       Cada usuário entra com "usuário + senha". Por trás, o Firebase usa um e-mail
+       interno gerado automaticamente; a coleção "logins" liga o usuário a esse e-mail. */
+    const auth = getAuth(app);
+    await setPersistence(auth, browserSessionPersistence).catch(() => {});
+    const app2 = initializeApp(firebaseConfig, "cadastro");      /* usado para criar contas sem derrubar a sessão do admin */
+    const auth2 = getAuth(app2);
+    await setPersistence(auth2, inMemoryPersistence).catch(() => {});
+    const newEmail = () => "u" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10) + "@treinamentos-online.firebaseapp.com";
+    const authErr = (e) => {
+      const c = (e && e.code) || "";
+      const msg = {
+        "auth/invalid-credential": "Usuário ou senha incorretos.",
+        "auth/wrong-password": "Usuário ou senha incorretos.",
+        "auth/user-not-found": "Usuário ou senha incorretos.",
+        "auth/invalid-login-credentials": "Usuário ou senha incorretos.",
+        "auth/too-many-requests": "Muitas tentativas. Aguarde alguns minutos e tente de novo.",
+        "auth/network-request-failed": "Sem conexão com a internet.",
+        "auth/weak-password": "A senha precisa ter pelo menos 6 caracteres.",
+        "auth/operation-not-allowed": "O login por e-mail e senha não está ativado no Firebase (Authentication).",
+        "auth/configuration-not-found": "O Authentication ainda não foi ativado no console do Firebase.",
+        "permission-denied": "O Firebase recusou a operação. Verifique as regras do Firestore."
+      }[c] || "Não foi possível concluir. Tente novamente.";
+      const err = new Error(msg); err.code = c; return err;
+    };
+    const authApi = {
+      onChange: (cb) => onAuthStateChanged(auth, cb),
+      uid: () => auth.currentUser ? auth.currentUser.uid : null,
+      async setupDone() {
+        try { return (await getDoc(doc(fs, "meta", "setup"))).exists(); }
+        catch (e) { console.warn("meta/setup", e); return true; }
+      },
+      async login(login, senha) {
+        let d;
+        try { d = await getDoc(doc(fs, "logins", login)); } catch (e) { throw authErr(e); }
+        if (!d.exists() || !d.data().email) throw authErr({ code: "auth/invalid-credential" });
+        try { await signInWithEmailAndPassword(auth, d.data().email, senha); } catch (e) { throw authErr(e); }
+      },
+      logout: () => signOut(auth).catch(() => {}),
+      async setupFirst({ nome, login, senha }) {
+        let cred;
+        try { cred = await createUserWithEmailAndPassword(auth, newEmail(), senha); } catch (e) { throw authErr(e); }
+        const uid = cred.user.uid, agora = new Date().toISOString();
+        try {
+          const b = writeBatch(fs);
+          b.set(doc(fs, "users", uid), { nome, login, perfil: "admin", employeeId: "", ativo: true, criadoEm: agora });
+          b.set(doc(fs, "logins", login), { uid, email: cred.user.email });
+          b.set(doc(fs, "meta", "setup"), { uid, em: agora });
+          await b.commit();
+        } catch (e) { await signOut(auth).catch(() => {}); throw authErr(e); }
+        return uid;
+      },
+      async createAccount(senha) {
+        try {
+          const c = await createUserWithEmailAndPassword(auth2, newEmail(), senha);
+          const r = { uid: c.user.uid, email: c.user.email };
+          await signOut(auth2).catch(() => {});
+          return r;
+        } catch (e) { throw authErr(e); }
+      },
+      async changeMyPassword(atual, nova) {
+        const u = auth.currentUser; if (!u) throw authErr({});
+        try { await reauthenticateWithCredential(u, EmailAuthProvider.credential(u.email, atual)); }
+        catch (e) { const er = authErr(e); if (/incorretos/.test(er.message)) er.message = "Senha atual incorreta."; throw er; }
+        try { await updatePassword(u, nova); } catch (e) { throw authErr(e); }
+      }
+    };
+    window.__fbResolve({ db, assets, auth: authApi });
+  } catch (e) {
+    console.error("Falha ao iniciar o Firebase", e);
+    window.__fbResolve(null);
+  }
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -414,7 +564,7 @@ const fmtDate = (iso) => { const d = parseDay(iso); return d ? d.toLocaleDateStr
 const today0 = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
 const fmtTime = (sec) => { sec = Math.max(0, Math.floor(sec || 0)); const h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, s2 = sec % 60; return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(s2).padStart(2, "0"); };
 const pct = (a, b) => b ? Math.round(a / b * 100) : 0;
-const maxVideo = () => caps.mode === "local" ? 1024 * 1024 * 1024 : 20 * 1024 * 1024;
+const maxVideo = () => caps.mode === "local" ? 1024 * 1024 * 1024 : 500 * 1024 * 1024;
 const COLORS = ["#0E6B57","#2F64B5","#B5532F","#8A3FA8","#C28A12","#3A8A99","#B03A63","#5A7A2B"];
 const ICON = {
   edit:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
@@ -471,24 +621,53 @@ let currentVideoUrl = null;
 
 const Store = {
   async init() {
-    const use = (n) => (window.claude && typeof window.claude.use === "function") ? window.claude.use(n).catch(() => null) : Promise.resolve(null);
-    const [db, user, assets] = await Promise.all([use("db"), use("user"), use("assets")]);
-    caps.db = db; caps.user = user; caps.assets = assets;
-    if (user && typeof user.can === "function") {
-      try { const c = await user.can("data.write"); if (c === false) caps.canWrite = false; } catch {}
+    const fb = await Promise.race([window.__fb || Promise.resolve(null), new Promise(r => setTimeout(() => r(null), 15000))]);
+    if (!fb) {
+      $("#syncState").textContent = "Sem conexão com o banco de dados";
+      $("#view").innerHTML = `<div class="notice">Não foi possível conectar ao Firebase. Verifique sua internet e recarregue a página.</div>`;
+      return;
     }
-    if (db) {
-      caps.mode = "shared";
-      let first = 0;
-      COLS.forEach(col => {
-        db.collection(col).onSnapshot(snap => {
+    const db = fb.db; caps.db = db; caps.assets = fb.assets; caps.firebase = true; caps.auth = fb.auth;
+    $("#syncState").textContent = "Dados salvos no Firebase";
+    /* configurações (nome, logo) são públicas: aparecem já na tela de login */
+    db.collection("config").onSnapshot(snap => {
+      state.config = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      if (caps.mode !== "loading") render();
+    }, err => console.warn("config", err));
+    const PRIV = COLS.filter(c => c !== "config");
+    let unsubs = [];
+    const stop = () => { unsubs.forEach(u => { try { u(); } catch {} }); unsubs = []; PRIV.forEach(c => state[c] = []); };
+    Store.startSession = (uid) => {
+      stop(); authUid = uid; caps.mode = "loading";
+      const seen = new Set();
+      PRIV.forEach(col => {
+        unsubs.push(db.collection(col).onSnapshot(snap => {
           state[col] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-          if (first < COLS.length) first++;
-          if (first >= COLS.length) render();
-        }, err => { console.warn(col, err); if (err.code === "revoked") { caps.canWrite = false; render(); } });
+          seen.add(col);
+          if (seen.size >= PRIV.length) {
+            if (caps.mode === "loading") {
+              caps.mode = "shared";
+              if (!state.users.some(u => u.id === uid && u.ativo !== false)) { authMsg = "Seu usuário não tem acesso a este sistema."; caps.auth.logout(); return; }
+            }
+            render();
+          }
+        }, err => {
+          console.warn(col, err);
+          if (err.code === "permission_denied" && authUid) { authMsg = "Seu usuário está desativado ou sem acesso. Procure o administrador."; caps.auth.logout(); }
+        }));
       });
-      $("#syncState").textContent = "Dados compartilhados com sua equipe";
-    } else {
+    };
+    fb.auth.onChange(async (user) => {
+      if (caps.settingUp) return;
+      if (user) { Store.startSession(user.uid); return; }
+      stop(); authUid = null; me = null;
+      caps.setupDone = await fb.auth.setupDone();
+      caps.mode = "shared";
+      render();
+    });
+  },
+  _unused() {
+    {
       caps.mode = "local";
       try { Object.assign(state, JSON.parse(localStorage.getItem(LOCAL_KEY) || "{}")); } catch {}
       COLS.forEach(c => { if (!Array.isArray(state[c])) state[c] = []; });
@@ -498,10 +677,10 @@ const Store = {
   },
   persistLocal() { try { localStorage.setItem(LOCAL_KEY, JSON.stringify(state)); } catch {} },
   async save(col, id, data, opts = {}) {
-    if (caps.mode === "shared") {
+    if (caps.firebase || caps.mode === "shared") {
       try { await caps.db.collection(col).doc(id).set(data); }
       catch (e) {
-        if (e.code === "invalid_argument") { caps.canWrite = false; render(); throw new Error("Seu acesso permite apenas visualizar."); }
+        if (e.code === "permission_denied") throw new Error("O Firebase recusou a gravação. Verifique as regras do Firestore.");
         if (e.code === "quota_exceeded") throw new Error("O limite de armazenamento foi atingido.");
         throw new Error("Não foi possível salvar. Tente novamente.");
       }
@@ -512,20 +691,29 @@ const Store = {
     }
   },
   async remove(col, id) {
-    if (caps.mode === "shared") { await caps.db.collection(col).doc(id).delete(); }
+    if (caps.firebase || caps.mode === "shared") { await caps.db.collection(col).doc(id).delete(); }
     else { state[col] = state[col].filter(x => x.id !== id); this.persistLocal(); render(); }
   },
-  async uploadVideo(file) {
+  async uploadVideo(file, onProgress) {
     if (caps.mode === "local") {
       const id = "v" + uid();
       try { await VideoDB.put(id, file); } catch { throw new Error("Sem espaço no navegador para salvar o vídeo."); }
       return { id };
     }
     if (!caps.assets) throw new Error("Envio de vídeo indisponível para seu acesso.");
-    try { return await caps.assets.upload(file, file.type ? undefined : { type: "video/mp4" }); }
+    try { return await caps.assets.upload(file, onProgress); }
     catch (e) {
-      const m = { too_large: "O vídeo passa de 20 MB.", unsupported_type: "Formato não aceito. Use MP4 ou WebM.", quota_or_state: "Espaço de armazenamento esgotado.", rate_limited: "Muitos envios seguidos. Aguarde um pouco." };
-      throw new Error(m[e.code] || "Falha ao enviar o vídeo.");
+      const m = { too_large: "O vídeo é grande demais.", quota_exceeded: "Espaço de armazenamento esgotado.", permission_denied: "O Firebase Storage recusou o envio. Verifique se o Storage está ativado.", unsupported_type: "Formato não aceito. Use MP4 ou WebM.", quota_or_state: "Espaço de armazenamento esgotado.", rate_limited: "Muitos envios seguidos. Aguarde um pouco." };
+      const storageErrors = {
+        "storage/unauthorized": "O Storage recusou o acesso. Confira as permissões da pasta videos nas regras do Firebase Storage.",
+        "storage/unauthenticated": "A sessão não foi reconhecida. Entre novamente e repita o envio.",
+        "storage/quota-exceeded": "O Storage atingiu uma cota. Confira o uso e o faturamento no Firebase.",
+        "storage/bucket-not-found": "O bucket de vídeos não foi encontrado. Confira a configuração do Storage no Firebase.",
+        "storage/retry-limit-exceeded": "O Storage não respondeu a tempo. Confira a conexão e se o Storage está ativo no Firebase."
+      };
+      console.error("Falha no envio do vídeo", e);
+      const message = storageErrors[e.code] || m[e.code] || "Falha ao enviar o vídeo.";
+      throw new Error(e.code ? `${message} (${e.code})` : message);
     }
   },
   async deleteVideo(id) { if (caps.mode === "local" && id) { try { await VideoDB.del(id); } catch {} return; } if (caps.assets && id) { try { await caps.assets.delete(id); } catch {} } }
@@ -596,16 +784,13 @@ const firstRoute = () => Object.keys(ROUTES).find(routeOk) || null;
 async function saveConfig(patch) { const { id, ...cur } = cfg(); await Store.save("config", "sistema", { ...cur, ...patch }); }
 
 /* ---------- sessão ---------- */
-const SESSION_KEY = "treinamentos-sessao";
-let sessionId = null;
-try { sessionId = sessionStorage.getItem(SESSION_KEY); } catch {}
-const setSession = (id) => { sessionId = id; try { id ? sessionStorage.setItem(SESSION_KEY, id) : sessionStorage.removeItem(SESSION_KEY); } catch {} };
-const sessionUser = () => sessionId ? state.users.find(u => u.id === sessionId && u.ativo !== false) || null : null;
+let authUid = null, authMsg = "";
+const sessionUser = () => authUid ? state.users.find(u => u.id === authUid && u.ativo !== false) || null : null;
 const loginTry = { fails: 0, until: 0 };
 function logout() {
   const pw = $("#playerWrap"); if (pw) closePlayer(pw);
   $$("dialog[open]").forEach(d => d.close());
-  setSession(null); me = null;
+  me = null; authUid = null; if (caps.auth) caps.auth.logout();
   ui.studyEmp = ""; ui.studyTraining = null; ui.quizResult = null; route = "painel";
   $("#view").innerHTML = "";
   render();
@@ -670,7 +855,7 @@ function readLogo(file) {
 
 /* ---------- tela de acesso ---------- */
 function showAuth() {
-  const a = $("#auth"), mode = state.users.length ? "login" : "setup";
+  const a = $("#auth"), mode = caps.setupDone ? "login" : "setup";
   $(".app").hidden = true;
   if (!a.hidden && a.dataset.mode === mode) { applyBranding(); return; }
   a.dataset.mode = mode; a.hidden = false;
@@ -689,6 +874,7 @@ function showAuth() {
     <div class="rights" data-rights></div>`;
   applyBranding(); syncChrome();
   const err = (m) => { const e = $("#authErr"); e.textContent = m; e.hidden = !m; };
+  if (authMsg) { err(authMsg); authMsg = ""; }
   $("#authForm").onsubmit = async (ev) => {
     ev.preventDefault(); err("");
     const login = $("#aLogin").value.trim().toLowerCase(), senha = $("#aSenha").value;
@@ -698,21 +884,19 @@ function showAuth() {
       if (!/^[a-z0-9._-]{3,}$/.test(login)) return err("O usuário deve ter ao menos 3 caracteres: letras, números, ponto, hífen ou sublinhado.");
       if (senha.length < 6) return err("A senha precisa ter pelo menos 6 caracteres.");
       if (senha !== $("#aSenha2").value) return err("As senhas não conferem.");
-      const id = uid(), salt = newSalt();
-      setSession(id);
-      try { await Store.save("users", id, { nome, login, perfil: "admin", employeeId: "", ativo: true, salt, hash: hashPass(senha, salt), criadoEm: new Date().toISOString() }); toast("Administrador criado. Bem-vindo!"); }
-      catch (e) { setSession(null); err(e.message); }
+      const btn = $("#authForm button[type=submit]"); btn.disabled = true;
+      caps.settingUp = true;
+      try {
+        const id = await caps.auth.setupFirst({ nome, login, senha });
+        caps.settingUp = false; caps.setupDone = true;
+        Store.startSession(id); toast("Administrador criado. Bem-vindo!");
+      } catch (e) { caps.settingUp = false; btn.disabled = false; err(e.message); }
       return;
     }
-    const now = Date.now();
-    if (loginTry.until > now) return err(`Muitas tentativas. Aguarde ${Math.ceil((loginTry.until - now) / 1000)} segundos.`);
-    const u = state.users.find(x => x.login === login);
-    if (!u || hashPass(senha, u.salt) !== u.hash) {
-      loginTry.fails++; if (loginTry.fails >= 5) { loginTry.fails = 0; loginTry.until = now + 30000; }
-      $("#aSenha").value = ""; return err("Usuário ou senha incorretos.");
-    }
-    if (u.ativo === false) return err("Este usuário está desativado. Procure o administrador.");
-    loginTry.fails = 0; setSession(u.id); render();
+    if (!login || !senha) return err("Informe usuário e senha.");
+    const btn = $("#authForm button[type=submit]"); btn.disabled = true;
+    try { await caps.auth.login(login, senha); }
+    catch (e) { btn.disabled = false; $("#aSenha").value = ""; err(e.message); }
   };
   ($("#aNome") || $("#aLogin")).focus();
 }
@@ -848,7 +1032,7 @@ function viewPainel() {
     .sort((a, b) => (b.e.admissao || "").localeCompare(a.e.admissao || "")).slice(0, 8);
 
   return `<div class="head"><div><h1>Painel</h1><p>Acompanhe o andamento dos treinamentos e da integração de novos funcionários.</p></div>
-    ${caps.mode === "local" && can("backup") ? `<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="export">Exportar backup</button><label class="btn" style="cursor:pointer">Importar backup<input type="file" id="importFile" accept="application/json,.json" hidden></label></div>` : ""}</div>
+    ${(caps.mode === "local" || caps.firebase) && can("backup") ? `<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="export">Exportar backup</button><label class="btn" style="cursor:pointer">Importar backup<input type="file" id="importFile" accept="application/json,.json" hidden></label></div>` : ""}</div>
   <div class="stats">
     <div class="stat"><strong>${emps.length}</strong><span>Funcionários cadastrados</span></div>
     <div class="stat"><strong>${trs.length}</strong><span>Treinamentos · ${withTest} com teste</span></div>
@@ -1021,10 +1205,27 @@ function formUser(u) {
         if (u.perfil === "admin" && (perfil !== "admin" || !ativo) && !otherAdmins) { toast("É preciso manter pelo menos um administrador ativo."); return false; }
         if (u.id === me.id && !ativo) { toast("Você não pode desativar o próprio usuário."); return false; }
       }
-      const data = { nome, login, perfil, employeeId: $("#uEmp").value, ativo, salt: u?.salt, hash: u?.hash, criadoEm: u?.criadoEm || new Date().toISOString() };
-      if (senha) { data.salt = newSalt(); data.hash = hashPass(senha, data.salt); }
-      await Store.save("users", u?.id || uid(), data);
-      toast(u ? "Usuário atualizado." : "Usuário criado.");
+      if (u && senha && u.id === me.id) { toast("Para trocar a sua própria senha, use \"Alterar minha senha\"."); return false; }
+      const data = { nome, login, perfil, employeeId: $("#uEmp").value, ativo, criadoEm: u?.criadoEm || new Date().toISOString() };
+      const ops = [];
+      try {
+        let id = u?.id, email = null;
+        if (!u || senha) {
+          /* conta nova no Firebase Authentication (para um usuário existente, isso redefine a senha) */
+          const acc = await caps.auth.createAccount(senha);
+          id = acc.uid; email = acc.email;
+          if (u) ops.push({ col: "users", id: u.id, del: true });
+        }
+        ops.push({ col: "users", id, data });
+        if (u && u.login !== login) ops.push({ col: "logins", id: u.login, del: true });
+        if (email) ops.push({ col: "logins", id: login, data: { uid: id, email } });
+        else if (u && u.login !== login) {
+          const antigo = await caps.db.getLogin(u.login);
+          if (antigo) ops.push({ col: "logins", id: login, data: antigo });
+        }
+        await caps.db.bulk(ops);
+      } catch (e) { toast(e.message || "Não foi possível salvar o usuário."); return false; }
+      toast(u ? (senha ? "Usuário atualizado e senha redefinida." : "Usuário atualizado.") : "Usuário criado.");
     });
   $("#uNome").focus();
 }
@@ -1037,13 +1238,11 @@ function formMyPass() {
     <div class="field"><label for="pNova2">Confirmar nova senha</label><input type="password" id="pNova2" autocomplete="new-password"></div></div>
     <span class="hint" style="margin-top:-8px">Mínimo de 6 caracteres.</span>`,
     async () => {
-      const u = state.users.find(x => x.id === me.id);
-      if (!u || hashPass($("#pAtual").value, u.salt) !== u.hash) { toast("Senha atual incorreta."); return false; }
       const n = $("#pNova").value;
       if (n.length < 6) { toast("A nova senha precisa ter pelo menos 6 caracteres."); return false; }
       if (n !== $("#pNova2").value) { toast("As senhas não conferem."); return false; }
-      const { id, ...rest } = u, salt = newSalt();
-      await Store.save("users", id, { ...rest, salt, hash: hashPass(n, salt) });
+      try { await caps.auth.changeMyPassword($("#pAtual").value, n); }
+      catch (e) { toast(e.message); return false; }
       toast("Senha alterada.");
     });
   $("#pAtual").focus();
@@ -1352,7 +1551,7 @@ function viewAula(emp, t) {
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">${prazoBadge(prazoInfo(emp, t, p))}${statusBadge(t, p)}${certAllowed(emp, t) ? `<button class="btn primary" data-cert="${esc(emp.id + "|" + t.id)}">${ICON.award}Emitir certificado</button>` : ""}</div></div>
     <div style="display:grid;gap:16px">
       ${t.videoId ? `<div class="pbox" id="playerWrap" data-key="${esc(emp.id + "__" + t.id + "__" + t.videoId)}" tabindex="-1">
-        <div class="player"><video id="aulaVideo" preload="metadata" playsinline disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback" ${caps.mode === "local" ? `data-local="${esc(t.videoId)}"` : `src="/_blob/${esc(t.videoId)}"`}></video>
+        <div class="player"><video id="aulaVideo" preload="metadata" playsinline disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback" ${caps.mode === "local" ? `data-local="${esc(t.videoId)}"` : `src="${esc(/^https?:/.test(t.videoId) ? t.videoId : "/_blob/" + t.videoId)}"`}></video>
           <div class="resume" hidden><div><b>Continuar de onde parou?</b><span class="small muted" data-r="txt"></span><div class="acts"><button type="button" class="btn primary" data-r="cont">${ICON.play}Continuar</button><button type="button" class="btn" data-r="ini">${ICON.restart}Do início</button></div></div></div></div>
         <div class="pctl">
           <button type="button" data-p="play" aria-label="Reproduzir">${ICON.play}</button>
@@ -1589,8 +1788,8 @@ function formTraining(t) {
     <div class="field" id="prazoVal"></div></div>
     <span class="hint" id="prazoHint" style="margin-top:-8px"></span>
     <div class="field"><span class="lbl">Vídeo do treinamento</span>
-      <div id="videoBox"></div>
-      <span class="hint">MP4 ou WebM, até ${caps.mode === "local" ? "1 GB" : "20 MB"}.</span></div>
+      <div id="videoBox"></div><p id="videoUploadStatus" class="hint" role="alert" style="margin:0"></p>
+      <span class="hint">MP4 ou WebM, até ${caps.mode === "local" ? "1 GB" : "500 MB"}.</span></div>
     <label class="switch"><input type="checkbox" id="tCert" ${t?.certificado === false ? "" : "checked"}><span><b>Emitir certificado ao concluir</b><span class="hint">Libera o certificado com nome, carga horária, data de conclusão e nota.</span></span></label>
     <label class="switch"><input type="checkbox" id="tTeste" ${t?.temTeste ? "checked" : ""}><span><b>Aplicar teste de conhecimento</b><span class="hint">O funcionário responde perguntas depois do vídeo e precisa atingir a nota mínima para concluir.</span></span></label>
     <div id="testBox" style="display:flex;flex-direction:column;gap:12px"></div>`,
@@ -1614,20 +1813,40 @@ function formTraining(t) {
           if (q.correta == null || q.correta >= q.opcoes.length) { toast(`Marque a resposta correta da pergunta ${i + 1}.`); return false; }
         }
       }
-      let videoId = removeVideo ? null : (t?.videoId || null);
-      if (file) {
-        btn.textContent = "Enviando vídeo…";
-        const up = await Store.uploadVideo(file);
-        if (t?.videoId) Store.deleteVideo(t.videoId);
-        videoId = up.id;
-      } else if (removeVideo && t?.videoId) Store.deleteVideo(t.videoId);
-      btn.textContent = "Salvando…";
-      await Store.save("trainings", t?.id || uid(), {
+      const selectedVideo = file;
+      const previousVideoId = t?.videoId || null;
+      const record = {
         titulo, descricao: $("#tDesc").value.trim(), conteudo: $("#tProg").value.split("\n").map(x => x.trim()).filter(Boolean).join("\n"), todasAreas, areaIds: todasAreas ? [] : areaIds, areaId: todasAreas ? "" : (areaIds[0] || ""), grupoCipa, grupoBrigada,
         duracao: $("#tDur").value ? String(parseInt($("#tDur").value, 10)) : "",
-        certificado: $("#tCert").checked, videoId, videoNome: file ? file.name : (removeVideo ? "" : (t?.videoNome || "")),
+        certificado: $("#tCert").checked, videoId: removeVideo ? null : previousVideoId, videoNome: selectedVideo ? selectedVideo.name : (removeVideo ? "" : (t?.videoNome || "")),
         temTeste, notaMinima, perguntas: temTeste ? clean : [], prazoTipo, prazoDias, prazoData, criadoEm: t?.criadoEm || new Date().toISOString()
-      });
+      };
+      const dialog = btn.closest("dialog");
+      const closeButtons = $$("[data-close]", dialog);
+      const preventClose = event => event.preventDefault();
+      const status = $("#videoUploadStatus", dialog);
+      closeButtons.forEach(button => { button.disabled = true; });
+      dialog.addEventListener("cancel", preventClose);
+      status.textContent = "";
+      try {
+        if (selectedVideo) {
+          btn.textContent = "Enviando vídeo… 0%";
+          const upload = await Store.uploadVideo(selectedVideo, percent => {
+            btn.textContent = percent === 100 ? "Confirmando vídeo…" : `Enviando vídeo… ${percent}%`;
+          });
+          record.videoId = upload.id;
+        }
+        btn.textContent = "Salvando…";
+        await Store.save("trainings", t?.id || uid(), record);
+        if (previousVideoId && previousVideoId !== record.videoId) Store.deleteVideo(previousVideoId);
+      } catch (error) {
+        if (selectedVideo && record.videoId && record.videoId !== previousVideoId) Store.deleteVideo(record.videoId);
+        status.textContent = error.message || "Não foi possível salvar o treinamento.";
+        return false;
+      } finally {
+        dialog.removeEventListener("cancel", preventClose);
+        closeButtons.forEach(button => { button.disabled = false; });
+      }
       toast(t ? "Treinamento atualizado." : "Treinamento cadastrado.");
     });
 
@@ -1679,7 +1898,7 @@ function formTraining(t) {
   function pick(f) {
     if (!f) return;
     if (!/^video\/(mp4|webm)$/.test(f.type) && !/\.(mp4|webm)$/i.test(f.name)) { toast("Formato não aceito. Use MP4 ou WebM."); return; }
-    if (f.size > maxVideo()) { toast(`O vídeo tem ${(f.size / 1048576).toFixed(1)} MB. O limite é ${caps.mode === "local" ? "1 GB" : "20 MB"}.`); return; }
+    if (f.size > maxVideo()) { toast(`O vídeo tem ${(f.size / 1048576).toFixed(1)} MB. O limite é ${caps.mode === "local" ? "1 GB" : "500 MB"}.`); return; }
     file = f; removeVideo = false; drawVideo();
   }
   drawVideo();
@@ -1795,7 +2014,7 @@ function bindView() {
         const u = state.users.find(x => x.id === id);
         if (!u || u.id === me.id) return;
         if (u.perfil === "admin" && u.ativo !== false && !state.users.some(x => x.id !== u.id && x.perfil === "admin" && x.ativo !== false)) { toast("É preciso manter pelo menos um administrador ativo."); return; }
-        if (await askConfirm("Excluir usuário?", `${u.nome} (${u.login}) perderá o acesso ao sistema. O cadastro de funcionário e o histórico de treinamentos não são apagados.`)) { await Store.remove("users", id); toast("Usuário excluído."); }
+        if (await askConfirm("Excluir usuário?", `${u.nome} (${u.login}) perderá o acesso ao sistema. O cadastro de funcionário e o histórico de treinamentos não são apagados.`)) { try { await caps.db.bulk([{ col: "users", id, del: true }, { col: "logins", id: u.login, del: true }]); toast("Usuário excluído."); } catch (e) { toast(e.message || "Não foi possível excluir."); } }
       }
       else if (act === "logo-rm") {
         if (await askConfirm("Remover logo?", "O sistema volta a usar o ícone padrão.", "Remover")) { await saveConfig({ logo: "" }); toast("Logo removida."); }
@@ -1820,8 +2039,29 @@ function bindView() {
     try {
       const data = JSON.parse(await f.text());
       if (!DATA_COLS.every(c => Array.isArray(data[c]))) throw new Error();
-      const comUsuarios = Array.isArray(data.users) && data.users.length;
-      if (!(await askConfirm("Importar backup?", `Os dados atuais deste navegador serão substituídos pelos do arquivo.${comUsuarios ? " Os usuários e senhas do arquivo também serão importados." : ""}`, "Importar"))) return;
+      const comUsuarios = !caps.firebase && Array.isArray(data.users) && data.users.length;
+      if (!(await askConfirm("Importar backup?", `Os dados atuais${caps.firebase ? " do banco" : " deste navegador"} serão substituídos pelos do arquivo.${comUsuarios ? " Os usuários e senhas do arquivo também serão importados." : ""}`, "Importar"))) return;
+      if (caps.firebase) {
+        const cols = [...DATA_COLS];
+        if (Array.isArray(data.config) && data.config.length) cols.push("config");
+        const ops = [];
+        cols.forEach(c => {
+          const novos = data[c].filter(x => x && x.id);
+          const ids = new Set(novos.map(x => String(x.id)));
+          state[c].forEach(x => { if (!ids.has(String(x.id))) ops.push({ col: c, id: String(x.id), del: true }); });
+          novos.forEach(x => {
+            const { id, ...rest } = x;
+            /* vídeos antigos não vêm no backup: o treinamento fica sem vídeo até ser reenviado */
+            if (c === "trainings" && rest.videoId && !/^https?:/.test(rest.videoId)) { rest.videoId = null; rest.videoNome = ""; }
+            ops.push({ col: c, id: String(id), data: rest });
+          });
+        });
+        toast("Importando…");
+        try { await caps.db.bulk(ops); }
+        catch (e) { toast(e.code === "permission_denied" ? "O Firebase recusou a gravação. Verifique as regras do Firestore." : "Falha ao importar. Tente novamente."); return; }
+        toast("Backup importado. Os usuários não vêm do backup: cadastre-os em Acessos. Reenvie os vídeos dos treinamentos.");
+        return;
+      }
       DATA_COLS.forEach(c => state[c] = data[c]);
       if (comUsuarios) state.users = data.users;
       if (Array.isArray(data.config) && data.config.length) state.config = data.config;
