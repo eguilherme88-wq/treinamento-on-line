@@ -915,7 +915,7 @@ const trAreaNames = (t) => t.todasAreas ? "Integração" : [...trAreaList(t).map
 const required = (emp) => state.trainings.filter(t => trFor(t, emp));
 const progOf = (empId, trId) => state.progress.find(p => p.employeeId === empId && p.trainingId === trId);
 // ID público do cliente OAuth Web do Google Cloud. Não use um segredo de cliente aqui.
-const DRIVE_OAUTH_CLIENT_ID = "";
+const DRIVE_OAUTH_CLIENT_ID = "36525471973-gp0j31u40afcskgdrbmgl7k1l1lqdlom.apps.googleusercontent.com";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 
 function driveVideo(value) {
