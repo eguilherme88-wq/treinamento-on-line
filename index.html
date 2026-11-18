@@ -12,7 +12,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js";
   import { getFirestore, collection, doc, getDoc, setDoc, deleteDoc, onSnapshot, writeBatch } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js";
   import { getAuth, setPersistence, browserSessionPersistence, inMemoryPersistence, onAuthStateChanged, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js";
-  import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject, setMaxUploadRetryTime, setMaxOperationRetryTime } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-storage.js";
+  import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-storage.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyCISpLqMQoOymOcB2qjcV4sA1lRoQsmtyM",
@@ -28,8 +28,8 @@
     const app = initializeApp(firebaseConfig);
     const fs = getFirestore(app);
     const st = getStorage(app);
-    setMaxUploadRetryTime(st, 60_000);
-    setMaxOperationRetryTime(st, 30_000);
+    st.maxUploadRetryTime = 60_000;
+    st.maxOperationRetryTime = 30_000;
     const clean = (d) => JSON.parse(JSON.stringify(d ?? {}));
     const mapErr = (e) => {
       const code = e && e.code;
