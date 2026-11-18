@@ -920,15 +920,10 @@ function driveVideo(value) {
     const file = /^\/file\/d\/([\w-]+)(?:\/(?:view|preview))?\/?$/.exec(url.pathname);
     const id = file?.[1] || (url.pathname === "/open" ? url.searchParams.get("id") : null);
     if (!id || !/^[\w-]+$/.test(id)) return null;
-    const view = new URL(`https://drive.google.com/file/d/${id}/view`);
-    const key = url.searchParams.get("resourcekey");
-    if (key) view.searchParams.set("resourcekey", key);
-    const preview = new URL(view);
-    preview.pathname = `/file/d/${id}/preview`;
-    return { view: view.href, preview: preview.href };
+    return id;
   } catch { return null; }
 }
-const watchedOk = (p, t) => !t.videoId || !!driveVideo(t.videoId) || !!(p && p.assistido);
+const watchedOk = (p, t) => !t.videoId || (driveVideo(t.videoId) ? !!p?.aprovado : !!p?.assistido);
 const isDone = (p, t) => !!p && watchedOk(p, t) && (t.temTeste || (t.videoId && !driveVideo(t.videoId))) && (!t.temTeste || !!p.aprovado);
 const empStats = (emp) => { const req = required(emp); const done = req.filter(t => isDone(progOf(emp.id, t.id), t)).length; return { total: req.length, done }; };
 function statusBadge(t, p) {
@@ -1547,7 +1542,7 @@ function viewAula(emp, t) {
   const qs = t.perguntas || [];
   let quiz = "";
   if (t.temTeste) {
-    if (!watched) quiz = `<div class="panel"><h2>Teste de conhecimento</h2><p class="muted" style="margin:0">O teste é liberado automaticamente quando o vídeo terminar.</p></div>`;
+    if (!watched) quiz = `<div class="panel"><h2>Teste de conhecimento</h2><p class="muted" style="margin:0">${drive ? "O teste ficará disponível depois que o responsável substituir o link e você assistir à aula." : "O teste é liberado automaticamente quando o vídeo terminar."}</p></div>`;
     else if (r) {
       quiz = `<div class="panel quiz"><h2>Resultado</h2>
         <div class="result ${r.aprovado ? "ok" : "bad"}"><strong>${r.nota}%</strong><div><b>${r.aprovado ? "Aprovado" : "Não atingiu a nota mínima"}</b><div class="small">${r.acertos} de ${qs.length} corretas · mínimo ${esc(t.notaMinima)}%</div></div></div>
@@ -1566,24 +1561,22 @@ function viewAula(emp, t) {
     <p>${esc(trAreaNames(t))}${t.duracao ? ` · ${esc(t.duracao)} min` : ""}${prazoTexto(t) && deadlineOf(emp, t) ? ` · concluir até ${deadlineOf(emp, t).toLocaleDateString("pt-BR")}` : ""}</p></div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">${prazoBadge(prazoInfo(emp, t, p))}${statusBadge(t, p)}${certAllowed(emp, t) ? `<button class="btn primary" data-cert="${esc(emp.id + "|" + t.id)}">${ICON.award}Emitir certificado</button>` : ""}</div></div>
     <div style="display:grid;gap:16px">
-      ${drive ? `<div class="player"><iframe src="${esc(drive.preview)}" title="Vídeo do treinamento no Google Drive" allow="autoplay; fullscreen" allowfullscreen style="width:100%;height:100%;border:0"></iframe></div>`
+      ${drive ? `<div class="notice">Vídeo indisponível. O responsável pelo treinamento precisa substituir o link do Google Drive por um link direto do arquivo.</div>`
         : t.videoId ? `<div class="pbox" id="playerWrap" data-key="${esc(emp.id + "__" + t.id + "__" + t.videoId)}" tabindex="-1">
         <div class="player"><video id="aulaVideo" preload="metadata" playsinline disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback" ${caps.mode === "local" ? `data-local="${esc(t.videoId)}"` : `src="${esc(/^https?:/.test(t.videoId) ? t.videoId : "/_blob/" + t.videoId)}"`}></video>
           <div class="resume" hidden><div><b>Continuar de onde parou?</b><span class="small muted" data-r="txt"></span><div class="acts"><button type="button" class="btn primary" data-r="cont">${ICON.play}Continuar</button><button type="button" class="btn" data-r="ini">${ICON.restart}Do início</button></div></div></div></div>
         <div class="pctl">
           <button type="button" data-p="play" aria-label="Reproduzir">${ICON.play}</button>
           <span class="ptime" data-p="time">0:00 / 0:00</span>
-          <div class="ptrack" data-p="track" title="Você pode voltar para trechos já assistidos"><div class="seen"></div><div class="cur"></div></div>
+          <div class="ptrack" data-p="track" aria-hidden="true" style="cursor:default"><div class="seen"></div><div class="cur"></div></div>
           <button type="button" class="rst" data-p="restart" aria-label="Recomeçar do início">${ICON.restart}<span>Recomeçar</span></button>
           <button type="button" data-p="mute" aria-label="Desativar som">${ICON.vol}</button>
           <button type="button" data-p="full" aria-label="Tela cheia">${ICON.full}</button>
         </div></div>` : `<div class="player"><div class="novideo">Este treinamento não tem vídeo.</div></div>`}
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        ${drive ? `<a class="btn" href="${esc(drive.view)}" target="_blank" rel="noopener noreferrer">Abrir no Google Drive</a>
-          <span class="small muted">Assista ao vídeo e faça o teste para concluir. O tempo assistido no Drive não é registrado.</span>`
-          : !t.videoId ? (t.temTeste ? `<span class="small muted">Sem vídeo: o teste já está liberado.</span>` : `<span class="small muted">O responsável ainda não enviou o vídeo deste treinamento.</span>`)
-          : p && p.assistido ? `<span class="badge ok">${ICON.check}Vídeo assistido</span><span class="small muted">Agora você pode rever qualquer trecho.</span>`
-          : `<span class="small muted">Assista ao vídeo até o fim para concluir${t.temTeste ? " e liberar o teste" : ""}. Não é possível adiantar: você pode voltar a trechos já vistos, recomeçar ou continuar de onde parou.</span>`}
+        ${drive ? "" : !t.videoId ? (t.temTeste ? `<span class="small muted">Sem vídeo: o teste já está liberado.</span>` : `<span class="small muted">O responsável ainda não enviou o vídeo deste treinamento.</span>`)
+          : p && p.assistido ? `<span class="badge ok">${ICON.check}Vídeo assistido</span><span class="small muted">Você pode assistir novamente desde o início.</span>`
+          : `<span class="small muted">Assista ao vídeo até o fim para concluir${t.temTeste ? " e liberar o teste" : ""}. Você pode pausar, continuar ou recomeçar.</span>`}
       </div>
       ${t.descricao ? `<div class="panel"><h2>Sobre o treinamento</h2><p style="margin:0;white-space:pre-wrap">${esc(t.descricao)}</p></div>` : ""}
       ${quiz}
@@ -1619,14 +1612,15 @@ function initPlayer() {
   const vid = $("video", wrap), q = (k) => $(`[data-p=${k}]`, wrap);
   const track = q("track"), seenEl = $(".seen", track), curEl = $(".cur", track), resume = $(".resume", wrap);
   const p0 = progOf(emp.id, t.id);
-  let free = !!(p0 && p0.assistido);             // já assistido: pode navegar à vontade
-  let maxSeen = free ? 0 : (+p0?.maxAssistido || 0);
-  const startAt = free ? 0 : (+p0?.posicao || 0);
+  let completed = !!p0?.assistido;
+  let maxSeen = completed ? 0 : (+p0?.maxAssistido || 0);
+  const startAt = completed ? 0 : (+p0?.posicao || 0);
   let dur = 0, lastSave = { pos: startAt, max: maxSeen }, lastSaveAt = Date.now(), finishing = false;
   const SLACK = 1.5;
+  let lastPosition = 0;
 
   const draw = () => {
-    const c = vid.currentTime || 0, lim = free ? dur : Math.min(maxSeen, dur);
+    const c = vid.currentTime || 0, lim = completed ? dur : Math.min(maxSeen, dur);
     seenEl.style.width = dur ? (lim / dur * 100) + "%" : "0";
     curEl.style.width = dur ? (c / dur * 100) + "%" : "0";
     q("time").textContent = `${fmtTime(c)} / ${fmtTime(dur)}`;
@@ -1638,7 +1632,7 @@ function initPlayer() {
   };
   const snap = () => ({ pos: vid.currentTime || 0, max: maxSeen, dur });
   const persist = (sn) => {
-    if (free || !sn.dur) return;
+    if (completed || !sn.dur) return;
     if (Math.abs(sn.pos - lastSave.pos) < 1 && Math.abs(sn.max - lastSave.max) < 1) return;
     lastSave = { pos: sn.pos, max: sn.max }; lastSaveAt = Date.now();
     const r = (x) => Math.round(x * 10) / 10;
@@ -1658,9 +1652,10 @@ function initPlayer() {
 
   vid.addEventListener("loadedmetadata", () => {
     dur = vid.duration || 0;
-    if (!free) maxSeen = Math.min(maxSeen, dur);
+    if (!completed) maxSeen = Math.min(maxSeen, dur);
     const s0 = Math.min(startAt, maxSeen);
-    if (!free && s0 > 3 && s0 < dur - 1) {
+    if (!completed && s0 > 3 && s0 < dur - 1) {
+      lastPosition = s0;
       vid.currentTime = s0;
       $("[data-r=txt]", resume).textContent = `Você parou em ${fmtTime(s0)} de ${fmtTime(dur)}.`;
       resume.hidden = false;
@@ -1669,27 +1664,28 @@ function initPlayer() {
   });
   vid.addEventListener("timeupdate", () => {
     const c = vid.currentTime;
-    if (!free) {
+    if (!vid.seeking) lastPosition = c;
+    if (!completed) {
       if (c > maxSeen + SLACK) { vid.currentTime = maxSeen; return; }
       if (!vid.seeking && c > maxSeen) maxSeen = c;
       if (!vid.paused && Date.now() - lastSaveAt > 10000) persist(snap());
     }
     draw();
   });
-  vid.addEventListener("seeking", () => { if (!free && vid.currentTime > maxSeen + SLACK) vid.currentTime = maxSeen; });
-  vid.addEventListener("ratechange", () => { if (!free && vid.playbackRate !== 1) vid.playbackRate = 1; });
+  vid.addEventListener("seeking", () => { if (vid.currentTime > lastPosition + 0.25) vid.currentTime = lastPosition; });
+  vid.addEventListener("ratechange", () => { if (vid.playbackRate !== 1) vid.playbackRate = 1; });
   vid.addEventListener("play", draw);
   vid.addEventListener("pause", () => { draw(); persist(snap()); });
   vid.addEventListener("volumechange", draw);
   vid.addEventListener("ended", async () => {
     draw();
-    if (free || finishing) return;
+    if (completed || finishing) return;
     if (maxSeen < dur - 2) { vid.currentTime = maxSeen; toast("Assista ao vídeo completo para concluir."); return; }
-    finishing = true; free = true; maxSeen = dur; lastSave = { pos: 0, max: dur };
+    finishing = true; completed = true; maxSeen = dur; lastSave = { pos: 0, max: dur };
     try {
       await saveProgress(emp, t, { assistido: true, posicao: 0, maxAssistido: Math.round(dur * 10) / 10, duracaoVideo: Math.round(dur * 10) / 10 });
       toast(t.temTeste ? "Vídeo assistido. O teste foi liberado." : "Treinamento concluído.");
-    } catch (e) { toast(e.message); free = false; finishing = false; }
+    } catch (e) { toast(e.message); completed = false; finishing = false; }
   });
 
   vid.addEventListener("click", () => { if (vid.paused) play(); else vid.pause(); });
@@ -1699,13 +1695,6 @@ function initPlayer() {
   const fsOk = !!(wrap.requestFullscreen && document.fullscreenEnabled);
   if (!fsOk) q("full").hidden = true;
   q("full").onclick = () => { if (document.fullscreenElement === wrap) document.exitFullscreen().catch(() => {}); else wrap.requestFullscreen().catch(() => {}); };
-  track.addEventListener("click", (e) => {
-    if (!dur) return;
-    const r = track.getBoundingClientRect();
-    let to = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * dur;
-    if (!free && to > maxSeen) { to = maxSeen; toast("Só é possível voltar para trechos já assistidos."); }
-    vid.currentTime = to; draw();
-  });
   $("[data-r=cont]", resume).onclick = play;
   $("[data-r=ini]", resume).onclick = () => { vid.currentTime = 0; play(); };
   wrap.addEventListener("keydown", (e) => {
@@ -1809,7 +1798,7 @@ function formTraining(t) {
     <span class="hint" id="prazoHint" style="margin-top:-8px"></span>
     <div class="field"><span class="lbl">Vídeo do treinamento</span>
       <div id="videoBox"></div><p id="videoUploadStatus" class="hint" role="alert" style="margin:0"></p>
-      <span class="hint">${useVideoLink ? "Cole o link de compartilhamento do arquivo no Google Drive ou o endereço HTTPS direto de um MP4 ou WebM. Para vídeos do Drive, ative o teste de conhecimento." : `MP4 ou WebM, até ${caps.mode === "local" ? "1 GB" : "500 MB"}.`}</span></div>
+      <span class="hint">${useVideoLink ? "Cole um link HTTPS direto de um MP4 ou WebM. O teste de conhecimento é opcional." : `MP4 ou WebM, até ${caps.mode === "local" ? "1 GB" : "500 MB"}.`}</span></div>
     <label class="switch"><input type="checkbox" id="tCert" ${t?.certificado === false ? "" : "checked"}><span><b>Emitir certificado ao concluir</b><span class="hint">Libera o certificado com nome, carga horária, data de conclusão e nota.</span></span></label>
     <label class="switch"><input type="checkbox" id="tTeste" ${t?.temTeste ? "checked" : ""}><span><b>Aplicar teste de conhecimento</b><span class="hint">O funcionário responde perguntas depois do vídeo e precisa atingir a nota mínima para concluir.</span></span></label>
     <div id="testBox" style="display:flex;flex-direction:column;gap:12px"></div>`,
@@ -1843,19 +1832,18 @@ function formTraining(t) {
         else if (value) {
           try {
             const url = new URL(value);
-            const drive = driveVideo(value);
-            if (!drive && (url.protocol !== "https:" || url.username || url.password || !/\.(mp4|webm)$/i.test(url.pathname))) throw new Error();
-            videoLink = drive?.view || url.href;
+            if (url.protocol !== "https:" || url.username || url.password || !/\.(mp4|webm)$/i.test(url.pathname)) throw new Error();
+            videoLink = url.href;
           } catch {
-            status.textContent = "Informe o link de compartilhamento do arquivo no Google Drive ou um link HTTPS direto para MP4 ou WebM.";
+            status.textContent = "Informe um link HTTPS direto para MP4 ou WebM.";
             $("#tVideoLink").focus();
             return false;
           }
         }
       }
-      if (driveVideo(videoLink) && !temTeste) {
-        status.textContent = "Ative o teste de conhecimento para registrar a conclusão de vídeos do Google Drive.";
-        $("#tTeste").focus();
+      if (driveVideo(videoLink)) {
+        status.textContent = "Substitua o link do Google Drive por um link direto de MP4 ou WebM.";
+        $("#tVideoLink").focus();
         return false;
       }
       const record = {
@@ -1926,7 +1914,7 @@ function formTraining(t) {
     const box = $("#videoBox");
     if (useVideoLink) {
       box.innerHTML = `<label for="tVideoLink" class="small muted">Link do vídeo</label>
-        <input type="url" id="tVideoLink" placeholder="https://drive.google.com/file/d/…/view" value="${esc(/^https?:/.test(t?.videoId || "") ? t.videoId : "")}" style="width:100%">`;
+        <input type="url" id="tVideoLink" placeholder="https://exemplo.com/aula.mp4" value="${esc(/^https?:/.test(t?.videoId || "") ? t.videoId : "")}" style="width:100%">`;
       return;
     }
     const existing = t?.videoId && !removeVideo && !file;
