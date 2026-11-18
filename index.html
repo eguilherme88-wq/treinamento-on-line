@@ -913,8 +913,23 @@ const trAreaList = (t) => trAreas(t).map(areaById).filter(Boolean).sort((a, b) =
 const trAreaNames = (t) => t.todasAreas ? "Integração" : [...trAreaList(t).map(a => a.nome), ...trGrupos(t)].join(", ");
 const required = (emp) => state.trainings.filter(t => trFor(t, emp));
 const progOf = (empId, trId) => state.progress.find(p => p.employeeId === empId && p.trainingId === trId);
-const watchedOk = (p, t) => !t.videoId || !!(p && p.assistido);
-const isDone = (p, t) => !!p && watchedOk(p, t) && (t.videoId || t.temTeste) && (!t.temTeste || !!p.aprovado);
+function driveVideo(value) {
+  try {
+    const url = new URL(value);
+    if (url.origin !== "https://drive.google.com" || url.username || url.password) return null;
+    const file = /^\/file\/d\/([\w-]+)(?:\/(?:view|preview))?\/?$/.exec(url.pathname);
+    const id = file?.[1] || (url.pathname === "/open" ? url.searchParams.get("id") : null);
+    if (!id || !/^[\w-]+$/.test(id)) return null;
+    const view = new URL(`https://drive.google.com/file/d/${id}/view`);
+    const key = url.searchParams.get("resourcekey");
+    if (key) view.searchParams.set("resourcekey", key);
+    const preview = new URL(view);
+    preview.pathname = `/file/d/${id}/preview`;
+    return { view: view.href, preview: preview.href };
+  } catch { return null; }
+}
+const watchedOk = (p, t) => !t.videoId || !!driveVideo(t.videoId) || !!(p && p.assistido);
+const isDone = (p, t) => !!p && watchedOk(p, t) && (t.temTeste || (t.videoId && !driveVideo(t.videoId))) && (!t.temTeste || !!p.aprovado);
 const empStats = (emp) => { const req = required(emp); const done = req.filter(t => isDone(progOf(emp.id, t.id), t)).length; return { total: req.length, done }; };
 function statusBadge(t, p) {
   if (isDone(p, t)) return `<span class="badge ok">Concluído${t.temTeste && p.nota != null ? ` · ${p.nota}%` : ""}</span>`;
@@ -1526,6 +1541,7 @@ function viewEstudar() {
 }
 function viewAula(emp, t) {
   const p = progOf(emp.id, t.id);
+  const drive = driveVideo(t.videoId);
   const watched = watchedOk(p, t);
   const r = ui.quizResult && ui.quizResult.trainingId === t.id ? ui.quizResult : null;
   const qs = t.perguntas || [];
@@ -1550,7 +1566,8 @@ function viewAula(emp, t) {
     <p>${esc(trAreaNames(t))}${t.duracao ? ` · ${esc(t.duracao)} min` : ""}${prazoTexto(t) && deadlineOf(emp, t) ? ` · concluir até ${deadlineOf(emp, t).toLocaleDateString("pt-BR")}` : ""}</p></div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">${prazoBadge(prazoInfo(emp, t, p))}${statusBadge(t, p)}${certAllowed(emp, t) ? `<button class="btn primary" data-cert="${esc(emp.id + "|" + t.id)}">${ICON.award}Emitir certificado</button>` : ""}</div></div>
     <div style="display:grid;gap:16px">
-      ${t.videoId ? `<div class="pbox" id="playerWrap" data-key="${esc(emp.id + "__" + t.id + "__" + t.videoId)}" tabindex="-1">
+      ${drive ? `<div class="player"><iframe src="${esc(drive.preview)}" title="Vídeo do treinamento no Google Drive" allow="autoplay; fullscreen" allowfullscreen style="width:100%;height:100%;border:0"></iframe></div>`
+        : t.videoId ? `<div class="pbox" id="playerWrap" data-key="${esc(emp.id + "__" + t.id + "__" + t.videoId)}" tabindex="-1">
         <div class="player"><video id="aulaVideo" preload="metadata" playsinline disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback" ${caps.mode === "local" ? `data-local="${esc(t.videoId)}"` : `src="${esc(/^https?:/.test(t.videoId) ? t.videoId : "/_blob/" + t.videoId)}"`}></video>
           <div class="resume" hidden><div><b>Continuar de onde parou?</b><span class="small muted" data-r="txt"></span><div class="acts"><button type="button" class="btn primary" data-r="cont">${ICON.play}Continuar</button><button type="button" class="btn" data-r="ini">${ICON.restart}Do início</button></div></div></div></div>
         <div class="pctl">
@@ -1562,7 +1579,9 @@ function viewAula(emp, t) {
           <button type="button" data-p="full" aria-label="Tela cheia">${ICON.full}</button>
         </div></div>` : `<div class="player"><div class="novideo">Este treinamento não tem vídeo.</div></div>`}
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        ${!t.videoId ? (t.temTeste ? `<span class="small muted">Sem vídeo: o teste já está liberado.</span>` : `<span class="small muted">O responsável ainda não enviou o vídeo deste treinamento.</span>`)
+        ${drive ? `<a class="btn" href="${esc(drive.view)}" target="_blank" rel="noopener noreferrer">Abrir no Google Drive</a>
+          <span class="small muted">Assista ao vídeo e faça o teste para concluir. O tempo assistido no Drive não é registrado.</span>`
+          : !t.videoId ? (t.temTeste ? `<span class="small muted">Sem vídeo: o teste já está liberado.</span>` : `<span class="small muted">O responsável ainda não enviou o vídeo deste treinamento.</span>`)
           : p && p.assistido ? `<span class="badge ok">${ICON.check}Vídeo assistido</span><span class="small muted">Agora você pode rever qualquer trecho.</span>`
           : `<span class="small muted">Assista ao vídeo até o fim para concluir${t.temTeste ? " e liberar o teste" : ""}. Não é possível adiantar: você pode voltar a trechos já vistos, recomeçar ou continuar de onde parou.</span>`}
       </div>
@@ -1790,7 +1809,7 @@ function formTraining(t) {
     <span class="hint" id="prazoHint" style="margin-top:-8px"></span>
     <div class="field"><span class="lbl">Vídeo do treinamento</span>
       <div id="videoBox"></div><p id="videoUploadStatus" class="hint" role="alert" style="margin:0"></p>
-      <span class="hint">${useVideoLink ? "Cole o endereço HTTPS direto de um MP4 ou WebM. Deixe em branco para salvar sem vídeo." : `MP4 ou WebM, até ${caps.mode === "local" ? "1 GB" : "500 MB"}.`}</span></div>
+      <span class="hint">${useVideoLink ? "Cole o link de compartilhamento do arquivo no Google Drive ou o endereço HTTPS direto de um MP4 ou WebM. Para vídeos do Drive, ative o teste de conhecimento." : `MP4 ou WebM, até ${caps.mode === "local" ? "1 GB" : "500 MB"}.`}</span></div>
     <label class="switch"><input type="checkbox" id="tCert" ${t?.certificado === false ? "" : "checked"}><span><b>Emitir certificado ao concluir</b><span class="hint">Libera o certificado com nome, carga horária, data de conclusão e nota.</span></span></label>
     <label class="switch"><input type="checkbox" id="tTeste" ${t?.temTeste ? "checked" : ""}><span><b>Aplicar teste de conhecimento</b><span class="hint">O funcionário responde perguntas depois do vídeo e precisa atingir a nota mínima para concluir.</span></span></label>
     <div id="testBox" style="display:flex;flex-direction:column;gap:12px"></div>`,
@@ -1824,14 +1843,20 @@ function formTraining(t) {
         else if (value) {
           try {
             const url = new URL(value);
-            if (url.protocol !== "https:" || url.username || url.password || !/\.(mp4|webm)$/i.test(url.pathname)) throw new Error();
-            videoLink = url.href;
+            const drive = driveVideo(value);
+            if (!drive && (url.protocol !== "https:" || url.username || url.password || !/\.(mp4|webm)$/i.test(url.pathname))) throw new Error();
+            videoLink = drive?.view || url.href;
           } catch {
-            status.textContent = "Informe um link HTTPS direto para um arquivo .mp4 ou .webm.";
+            status.textContent = "Informe o link de compartilhamento do arquivo no Google Drive ou um link HTTPS direto para MP4 ou WebM.";
             $("#tVideoLink").focus();
             return false;
           }
         }
+      }
+      if (driveVideo(videoLink) && !temTeste) {
+        status.textContent = "Ative o teste de conhecimento para registrar a conclusão de vídeos do Google Drive.";
+        $("#tTeste").focus();
+        return false;
       }
       const record = {
         titulo, descricao: $("#tDesc").value.trim(), conteudo: $("#tProg").value.split("\n").map(x => x.trim()).filter(Boolean).join("\n"), todasAreas, areaIds: todasAreas ? [] : areaIds, areaId: todasAreas ? "" : (areaIds[0] || ""), grupoCipa, grupoBrigada,
@@ -1900,8 +1925,8 @@ function formTraining(t) {
   function drawVideo() {
     const box = $("#videoBox");
     if (useVideoLink) {
-      box.innerHTML = `<label for="tVideoLink" class="small muted">Link direto do vídeo</label>
-        <input type="url" id="tVideoLink" placeholder="https://exemplo.com/aula.mp4" value="${esc(/^https?:/.test(t?.videoId || "") ? t.videoId : "")}" style="width:100%">`;
+      box.innerHTML = `<label for="tVideoLink" class="small muted">Link do vídeo</label>
+        <input type="url" id="tVideoLink" placeholder="https://drive.google.com/file/d/…/view" value="${esc(/^https?:/.test(t?.videoId || "") ? t.videoId : "")}" style="width:100%">`;
       return;
     }
     const existing = t?.videoId && !removeVideo && !file;
@@ -2112,7 +2137,7 @@ function bindView() {
     const nota = pct(acertos, qs.length), aprovado = nota >= (t.notaMinima ?? 70);
     const cur = progOf(emp.id, t.id);
     try {
-      await saveProgress(emp, t, { nota, aprovado, tentativas: (cur?.tentativas || 0) + 1, assistido: true });
+      await saveProgress(emp, t, { nota, aprovado, tentativas: (cur?.tentativas || 0) + 1, assistido: driveVideo(t.videoId) ? !!cur?.assistido : true });
       ui.quizResult = { trainingId: t.id, respostas, acertos, nota, aprovado }; ui.forceQuiz = false;
       render(); window.scrollTo(0, document.body.scrollHeight);
     } catch (e) { toast(e.message); }
