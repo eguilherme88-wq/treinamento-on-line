@@ -1111,15 +1111,32 @@ function render() {
 }
 
 /* ---------- Painel ---------- */
+/* setor que o usuário enxerga no painel: null = todos; "" = nenhum definido */
+const SETOR_TODOS = "__todos";
+function painelSetor() {
+  if (!me || me.perfil === "admin" || me.setorId === SETOR_TODOS) return null;
+  const id = me.setorId || state.employees.find(e => e.id === me.employeeId)?.areaId || "";
+  return id && areaById(id) ? id : "";
+}
+const setorLabel = (u) => {
+  if (u.perfil === "admin" || u.setorId === SETOR_TODOS) return "Todos os setores";
+  const id = u.setorId || state.employees.find(e => e.id === u.employeeId)?.areaId;
+  return areaById(id)?.nome || "";
+};
 function viewPainel() {
-  const emps = state.employees, trs = state.trainings;
+  const setor = painelSetor();
+  if (setor === "") return `<div class="head"><div><h1>Painel</h1></div></div><div class="empty"><h3>Seu usuário não tem um setor definido</h3><p>Peça ao administrador para escolher o seu setor em Usuários e acessos, ou vincular seu usuário a um funcionário.</p></div>`;
+  const setorArea = setor ? areaById(setor) : null;
+  const emps = setor ? state.employees.filter(e => e.areaId === setor) : state.employees;
+  const empIds = new Set(emps.map(e => e.id));
+  const trs = setor ? state.trainings.filter(t => trInArea(t, setor) || emps.some(e => trFor(t, e))) : state.trainings;
   let reqTotal = 0, reqDone = 0;
   emps.forEach(e => { const s = empStats(e); reqTotal += s.total; reqDone += s.done; });
   const withTest = trs.filter(t => t.temTeste).length;
-  const attempts = state.progress.filter(p => p.tentativas);
+  const attempts = state.progress.filter(p => p.tentativas && empIds.has(p.employeeId));
   const avg = attempts.length ? Math.round(attempts.reduce((s, p) => s + (p.nota || 0), 0) / attempts.length) : null;
 
-  const areaRows = sortedAreas().map(a => {
+  const areaRows = (setor ? [setorArea] : sortedAreas()).map(a => {
     const ae = emps.filter(e => e.areaId === a.id);
     let t = 0, d = 0; ae.forEach(e => { const s = empStats(e); t += s.total; d += s.done; });
     const nt = trs.filter(x => trInArea(x, a.id)).length;
@@ -1136,8 +1153,8 @@ function viewPainel() {
   const pendInteg = emps.map(e => ({ e, pend: integ.filter(t => !isDone(progOf(e.id, t.id), t)).length })).filter(x => x.pend > 0)
     .sort((a, b) => (b.e.admissao || "").localeCompare(a.e.admissao || "")).slice(0, 8);
 
-  return `<div class="head"><div><h1>Painel</h1><p>Acompanhe o andamento dos treinamentos e da integração de novos funcionários.</p></div>
-    ${(caps.mode === "local" || caps.firebase) && can("backup") ? `<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="export">Exportar backup</button><label class="btn" style="cursor:pointer">Importar backup<input type="file" id="importFile" accept="application/json,.json" hidden></label></div>` : ""}</div>
+  return `<div class="head"><div><h1>Painel${setorArea ? ` · ${esc(setorArea.nome)}` : ""}</h1><p>${setorArea ? `Andamento dos treinamentos e da integração dos funcionários do setor ${esc(setorArea.nome)}.` : "Acompanhe o andamento dos treinamentos e da integração de novos funcionários."}</p></div>
+    ${!setor && (caps.mode === "local" || caps.firebase) && can("backup") ?`<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="export">Exportar backup</button><label class="btn" style="cursor:pointer">Importar backup<input type="file" id="importFile" accept="application/json,.json" hidden></label></div>` : ""}</div>
   <div class="stats">
     <div class="stat"><strong>${emps.length}</strong><span>Funcionários cadastrados</span></div>
     <div class="stat"><strong>${trs.length}</strong><span>Treinamentos · ${withTest} com teste</span></div>
@@ -1146,11 +1163,11 @@ function viewPainel() {
     <div class="stat"><strong style="${atrasados ? "color:var(--bad)" : ""}">${atrasados}</strong><span>Treinamentos com prazo vencido</span></div>
   </div>
   <div class="grid2">
-    <section class="panel"><h2>Conclusão por área</h2>${areaRows ? `<div class="list">${areaRows}</div>` : `<p class="muted">Cadastre áreas para ver o andamento de cada uma.</p>`}</section>
+    <section class="panel"><h2>${setor ? "Conclusão do setor" : "Conclusão por área"}</h2>${areaRows ? `<div class="list">${areaRows}</div>` : `<p class="muted">Cadastre áreas para ver o andamento de cada uma.</p>`}</section>
     <section class="panel"><h2>Integração pendente</h2>
       ${!integ.length ? `<p class="muted">Nenhum treinamento de integração ainda. Ao cadastrar um treinamento, marque “Obrigatório para todas as áreas” para ele entrar aqui.</p>`
         : pendInteg.length ? `<div class="list">${pendInteg.map(({ e, pend }) => `<div class="list-row"><div class="grow"><b>${esc(e.nome)}</b><div class="small muted">${esc(areaById(e.areaId)?.nome || "Sem área")} · admissão ${fmtDate(e.admissao)}</div></div><span class="badge warn">${pend} pendente${pend > 1 ? "s" : ""}</span></div>`).join("")}</div>`
-        : `<p class="muted">Todos os funcionários concluíram a integração.</p>`}
+        : `<p class="muted">Todos os funcionários${setor ? " do setor" : ""} concluíram a integração.</p>`}
     </section>
   </div>
   <section class="panel" style="margin-top:16px"><h2>Prazos vencidos e próximos 7 dias</h2>
@@ -1262,6 +1279,7 @@ function viewAcessos() {
     const emp = state.employees.find(e => e.id === u.employeeId);
     return `<tr><td><b>${esc(u.nome)}</b>${u.id === me.id ? ` <span class="small muted">(você)</span>` : ""}<div class="small muted">${esc(u.login)}</div></td>
       <td>${profBadge(u.perfil)}</td><td>${emp ? esc(emp.nome) : `<span class="muted">—</span>`}</td>
+      <td>${setorLabel(u) ? esc(setorLabel(u)) : `<span class="badge warn">Sem setor</span>`}</td>
       <td>${u.ativo === false ? `<span class="badge bad">Inativo</span>` : `<span class="badge ok">Ativo</span>`}</td>
       <td style="white-space:nowrap;text-align:right">${caps.canWrite ? `<button class="btn ghost" data-act="edit-user" data-id="${esc(u.id)}" aria-label="Editar ${esc(u.nome)}">${ICON.edit}</button>${u.id !== me.id ? `<button class="btn ghost danger" data-act="del-user" data-id="${esc(u.id)}" aria-label="Excluir ${esc(u.nome)}">${ICON.trash}</button>` : ""}` : ""}</td></tr>`;
   }).join("");
@@ -1278,7 +1296,7 @@ function viewAcessos() {
   }).join("");
   return `<div class="head"><div><h1>Usuários e acessos</h1><p>Quem pode entrar no sistema e o que cada perfil pode fazer.</p></div>
     ${caps.canWrite ? `<button class="btn primary" data-act="new-user">${ICON.plus}Novo usuário</button>` : ""}</div>
-    <div class="table-wrap" style="margin-bottom:28px"><table><thead><tr><th>Usuário</th><th>Perfil</th><th>Funcionário vinculado</th><th>Situação</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="table-wrap" style="margin-bottom:28px"><table><thead><tr><th>Usuário</th><th>Perfil</th><th>Funcionário vinculado</th><th>Setor do painel</th><th>Situação</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
     <h2>Matriz de acesso</h2>
     <p class="muted small" style="margin:-4px 0 14px;max-width:70ch">O Administrador tem acesso total e não pode ser restringido. As alterações valem imediatamente para Master e Usuário. Quem não pode escolher qualquer funcionário faz apenas os treinamentos do funcionário vinculado ao seu usuário.</p>
     <div class="table-wrap"><table class="matrix"><thead><tr><th>Permissão</th><th>Administrador</th><th>Master</th><th>Usuário</th></tr></thead><tbody>${mrows}</tbody></table></div>`;
@@ -1291,6 +1309,11 @@ function formUser(u) {
     <div class="row2"><div class="field"><label for="uLogin">Usuário (login)</label><input type="text" id="uLogin" value="${esc(u?.login || "")}" autocapitalize="none" spellcheck="false" autocomplete="off" required></div>
     <div class="field"><label for="uPerfil">Perfil</label><select id="uPerfil">${PROFILES.map(p => `<option value="${p.k}" ${(u?.perfil || "usuario") === p.k ? "selected" : ""}>${esc(p.l)}</option>`).join("")}</select></div></div>
     <div class="field"><label for="uEmp">Funcionário vinculado</label><select id="uEmp">${empOpts}</select><span class="hint">Necessário para quem faz apenas os próprios treinamentos.</span></div>
+    <div class="field" id="uSetorField"><label for="uSetor">Setor do painel</label><select id="uSetor">
+      <option value="">Mesmo setor do funcionário vinculado</option>
+      ${sortedAreas().map(a => `<option value="${esc(a.id)}" ${u?.setorId === a.id ? "selected" : ""}>${esc(a.nome)}</option>`).join("")}
+      <option value="${SETOR_TODOS}" ${u?.setorId === SETOR_TODOS ? "selected" : ""}>Todos os setores</option></select>
+      <span class="hint" id="uSetorHint">O usuário vê no painel apenas os dados deste setor.</span></div>
     <div class="row2"><div class="field"><label for="uSenha">${u ? "Nova senha" : "Senha"}</label><input type="password" id="uSenha" autocomplete="new-password"></div>
     <div class="field"><label for="uSenha2">Confirmar senha</label><input type="password" id="uSenha2" autocomplete="new-password"></div></div>
     <span class="hint" style="margin-top:-8px">${u ? "Deixe em branco para manter a senha atual. " : ""}Mínimo de 6 caracteres.</span>
@@ -1311,7 +1334,7 @@ function formUser(u) {
         if (u.id === me.id && !ativo) { toast("Você não pode desativar o próprio usuário."); return false; }
       }
       if (u && senha && u.id === me.id) { toast("Para trocar a sua própria senha, use \"Alterar minha senha\"."); return false; }
-      const data = { nome, login, perfil, employeeId: $("#uEmp").value, ativo, criadoEm: u?.criadoEm || new Date().toISOString() };
+      const data = { nome, login, perfil, employeeId: $("#uEmp").value, setorId: perfil === "admin" ? "" : $("#uSetor").value, ativo, criadoEm: u?.criadoEm || new Date().toISOString() };
       const ops = [];
       try {
         let id = u?.id, email = null;
@@ -1332,6 +1355,12 @@ function formUser(u) {
       } catch (e) { toast(e.message || "Não foi possível salvar o usuário."); return false; }
       toast(u ? (senha ? "Usuário atualizado e senha redefinida." : "Usuário atualizado.") : "Usuário criado.");
     });
+  const syncSetor = () => {
+    const admin = $("#uPerfil").value === "admin";
+    $("#uSetor").disabled = admin; $("#uSetorField").classList.toggle("pick-off", admin);
+    $("#uSetorHint").textContent = admin ? "O administrador sempre vê todos os setores." : "O usuário vê no painel apenas os dados deste setor.";
+  };
+  $("#uPerfil").onchange = syncSetor; syncSetor();
   $("#uNome").focus();
 }
 
